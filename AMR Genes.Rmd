@@ -1,0 +1,181 @@
+---
+title: "AMR Genes"
+author: "Sam McMillan"
+date: "2023-12-19"
+output: html_document
+---
+
+```{r setup, require=T, include=T}
+library(tidyverse)
+library(pheatmap)
+library(psych)
+library(ggpubr)
+library(rstatix)
+
+sessionInfo()
+```
+The goal of this analysis is to see if the previously reported decrease in AMR genes after FMT also happens with this dataset
+
+# Get Dataframes
+Load in the dataframes we made from the "Data Organization and Stats" markdown
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+genes_raw<-readRDS("Dataframes/genes_raw.rds")
+
+source("Scripts/Color codes.R")
+```
+
+
+# Pull out AMR Genes
+```{r}
+AMR<-genes_raw%>%
+  filter(str_detect(genefamily,"resist|Resist"))%>%
+  separate(genefamily,into=c("UniRef","taxa"),sep = "\\|",fill="right")%>%
+  filter(!is.na(taxa))%>%
+  mutate(taxa=str_remove_all(taxa,".\\_\\_"))%>%
+  separate(UniRef,into=c("UniRef","desc"),sep=":",fill="right")%>%
+  filter(str_detect(desc,"drug|Drug|antibiotic|Antibiotic|Antiseptic|mycin|cycline|flav|cillin|phenicol|lactam|olone|rubicin|myxin|amide|zole"))%>%
+  separate(taxa,into=c("genus","species"),sep = "\\.",fill="right")%>%
+  left_join(.,tax_metadata%>%select(-species)%>%unique(),by="genus")%>%
+  select("UniRef","phylum","species",everything())%>%
+  mutate(species=if_else(is.na(species),"Unclassified",str_replace(species,"_"," ")))%>%
+  mutate(phylum=case_when(!is.na(phylum)~phylum, #Humann 3 does not have perfect matching to Metaphlan 4, These are ones that didn't overlap
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Ruminococcaceae_unclassified","Firmicutes_unclassified","Clostridiales_unclassified","Clostridiales_Family_XIII_Incertae_Sedis_unclassified","Faecalicatena","Absiella")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota",
+                          genus %in% c("Asaccharobacter","Actinomyces") ~ "Actinobacteriota",
+                          genus=="Proteobacteria_unclassified" ~ "Proteobacteria"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Faecalicatena")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus=="Asaccharobacter" ~ "Eggerthellaceae",
+                          genus=="Actinomyces" ~ "Actinomycetaceae",
+                          genus== "Absiella" ~"Erysipelotrichaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus","Ruminococcaceae_unclassified")~"Oscillospiraceae"))
+
+saveRDS(AMR,"Dataframes/AMR_raw.rds")
+
+```
+
+# Boxplot
+```{r}
+AMR_bp<-AMR%>%
+  gather(CLIENT.IDENTIFIER,CPM,-c(UniRef,desc,phylum,species,genus,family,kingdom,class,order))%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER, levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=str_remove(family,"f__"))%>%
+  mutate(family=str_replace_na(family,"Other"))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()%>%
+  full_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  select(CLIENT.IDENTIFIER,CPM,TIME.POINT.2,SUBJ.ID)%>%
+  group_by(CLIENT.IDENTIFIER,TIME.POINT.2,SUBJ.ID)%>%
+  summarize(sum=sum(CPM))
+  
+
+AMR_bp_stats<-AMR_bp%>%
+  ungroup()%>%
+  select(sum,TIME.POINT.2,SUBJ.ID)%>%
+  complete(TIME.POINT.2, SUBJ.ID, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  pairwise_wilcox_test(sum ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")
+
+ggplot(AMR_bp,aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=4000/50,dotsize=1,stroke=0.5)+
+  geom_boxplot(alpha=0,linewidth=0.3)+
+  theme_bw()+
+  theme(text=element_text(size=8),
+        legend.position="top",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank())+
+  labs(y = "Total AMR Gene Abundance (CPM)",
+       x= "",
+       fill="")+
+  scale_y_continuous(limits=c(0,6000),expand=c(0,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(AMR_bp_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     tip.length=0.01,
+                     step.increase=0.05,
+                     inherit.aes=F)
+
+ggsave("Figures/Supplementals/AMR boxplot.pdf", height=4,width=4,units="in")
+
+saveRDS(AMR_bp_stats,"Dataframes/Stats/AMR_genes_wilcox_signedrank.rds")
+```
+
+# Heatmap
+```{r}
+AMR_hmap<-AMR%>%
+        select(species,samplekey$CLIENT.IDENTIFIER,family)%>%
+        gather(CLIENT.IDENTIFIER,CPM,-species,-family)%>%
+        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+        group_by(species, CLIENT.IDENTIFIER,family)%>%
+        mutate(count=n())%>%
+        mutate(species=if_else(count<5|is.na(species),"Other",species))%>%
+        mutate(family=if_else(count<5|is.na(family),"Other",family))%>%
+        select(-count)%>%
+        group_by(species,CLIENT.IDENTIFIER,family)%>%
+        summarise(CPM=sum(CPM))%>%
+        mutate(CPM=log10(CPM+1))%>% #Transform for plot
+        spread(CLIENT.IDENTIFIER,CPM)%>%
+        select(species,samplekey$CLIENT.IDENTIFIER,family)%>%
+        column_to_rownames("species")%>%
+        mutate(family=if_else(is.na(family),"Other",family))%>%
+        mutate(family=factor(family,levels=names(anno_color$familyplot)))
+
+pheatmap(AMR_hmap[1:45],
+         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
+         annotation_row=AMR_hmap[46],
+         annotation_colors = list(family=anno_color$familyplot[which(names(anno_color$familyplot) %in% AMR_hmap$family)], TIME.POINT.2=anno_color$TIME.POINT.2),
+         cluster_cols=F,
+         cluster_rows=T,
+         fontsize=12,
+         show_colnames=F,
+         annotation_names_row=F,
+         annotation_names_col=F,
+         color=colorRampPalette(c("white","grey","black"))(50),
+         #color=colorRampPalette(c("white","darkgreen"))(50),
+         #color=c(colorRampPalette(c("white", "palegreen1"))(20),colorRampPalette(c("palegreen1", "darkgreen"))(20)),
+         filename="Figures/Supplementals/AMR heatmap.pdf",
+         border_color="grey20",
+         width=11,
+         height=20
+)
+```
+
+
+# Stacked Bar (Family) Plot
+```{r}
+#Make sure we have colors for everyone
+unique(AMR$family)[!unique(AMR$family) %in% names(anno_color$familyplot)]
+
+AMR_family<-AMR%>%
+  gather(CLIENT.IDENTIFIER,CPM,-c(UniRef,desc,phylum,species,genus,family,kingdom,class,order))%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER, levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=str_remove(family,"f__"))%>%
+  mutate(family=str_replace_na(family,"Other"))%>%
+  mutate(family=if_else(family %in% AMR_hmap$family,family,"Other"))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()
+
+ggplot(AMR_family,aes(x=CLIENT.IDENTIFIER, y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  theme(axis.text.x=element_blank(),
+        text=element_text(size=10),
+        legend.position="bottom",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        legend.key.size = unit(0.1,"inches"))+
+  guides(fill=guide_legend(ncol=3))+
+  scale_fill_manual(values = anno_color$familyplot)+
+  scale_y_continuous(limits=c(0,4000),expand=c(0,0))+
+  labs(x="",y="AMR Gene Abundance (CPM)",fill="")
+ggsave("Figures/Supplementals/AMR_family_plot.pdf",height=6,width=4, units="in")
+```
+
+

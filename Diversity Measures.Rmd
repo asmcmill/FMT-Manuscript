@@ -1,0 +1,327 @@
+---
+title: "Diversity Measures"
+author: "Sam McMillan"
+date: "2023-11-29"
+output: html_document
+---
+
+```{r setup, require=T, include=T, warning=F}
+library(tidyverse)
+library(vegan)
+library(ggpubr)
+library(pairwiseAdonis)
+library(rstatix)
+
+sessionInfo()
+```
+
+#Get Dataframes
+Load in the dataframes we made from the "Data Organization and Stats" markdown
+```{r dataframes}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+samplekey_rich<-readRDS("Dataframes/samplekey_rich.rds")
+bch_raw<-readRDS("Dataframes/bch_raw.rds")
+tax_raw<-readRDS("Dataframes/tax_raw.rds")
+genes_raw<-readRDS("Dataframes/genes_raw.rds")
+MCBA_raw<-readRDS("Dataframes/MCBA_raw.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# NMDS Dataframes
+I first want to look at the differences between timepoints of all of the different datasets that I have. We'll start with NMDS. 
+```{r NMDS}
+#Distance matrices
+tax_dist<-tax_raw%>%
+  filter(str_detect(clade_name,"s__"))%>% #species only
+  column_to_rownames("clade_name")%>%
+  t()%>%
+  vegdist(method="bray")
+
+bch_dist<-bch_raw%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  t()%>%
+  vegdist(method="bray")
+
+genes_dist<-genes_raw%>%
+  filter(!str_detect(genefamily,"\\|") & genefamily!="UNMAPPED")%>% #remove species information and unmapped genes
+  column_to_rownames("genefamily")%>%
+  t()%>%
+  vegdist(method="bray")
+
+MCBA_dist<-MCBA_raw%>%
+  column_to_rownames("BA")%>%
+  t()%>%
+  vegdist(method="bray")
+
+#NMDS & stats
+set.seed(102309)
+bch_nmds<-metaMDS(bch_dist)%>%
+  scores()%>%
+  as_tibble(rownames="CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey, by="CLIENT.IDENTIFIER")
+
+bch_nmds_stats <- bch_dist%>%
+  as.matrix()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2),by="CLIENT.IDENTIFIER")%>%
+  column_to_rownames("CLIENT.IDENTIFIER")%>%
+  pairwise.adonis2(as.dist(.[1:45]) ~ TIME.POINT.2, data = ., nperm = 1000)
+
+set.seed(102309)
+genes_nmds<-metaMDS(genes_dist)%>%
+  scores()%>%
+  as_tibble(rownames="CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey, by="CLIENT.IDENTIFIER")
+
+genes_nmds_stats <- genes_dist%>%
+  as.matrix()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2),by="CLIENT.IDENTIFIER")%>%
+  column_to_rownames("CLIENT.IDENTIFIER")%>%
+  pairwise.adonis2(as.dist(.[1:45]) ~ TIME.POINT.2, data = ., nperm = 1000)
+
+set.seed(102309)
+tax_nmds<-metaMDS(tax_dist)%>%
+  scores()%>%
+  as_tibble(rownames="CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey, by="CLIENT.IDENTIFIER")
+
+tax_nmds_stats <- tax_dist%>%
+  as.matrix()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2),by="CLIENT.IDENTIFIER")%>%
+  column_to_rownames("CLIENT.IDENTIFIER")%>%
+  pairwise.adonis2(as.dist(.[1:45]) ~ TIME.POINT.2, data = ., nperm = 1000)
+
+set.seed(102309)
+MCBA_nmds<-metaMDS(MCBA_dist)%>%
+  scores()%>%
+  as_tibble(rownames="CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey, by="CLIENT.IDENTIFIER")
+
+MCBA_nmds_stats <- MCBA_dist%>%
+  as.matrix()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(.,samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2),by="CLIENT.IDENTIFIER")%>%
+  column_to_rownames("CLIENT.IDENTIFIER")%>%
+  pairwise.adonis2(as.dist(.[1:45]) ~ TIME.POINT.2, data = ., nperm = 1000)
+
+##Pull out Stats
+extractadonis<-function(statdf,dist){
+  set.seed(102309)
+  do.call("rbind",list(
+  statdf[["Pre_vs_2 week"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="Pre_vs_2 week"),
+  statdf[["Pre_vs_2 month"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="Pre_vs_2 month"),
+  statdf[["Pre_vs_6 month"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="Pre_vs_6 month"),
+  statdf[["2 week_vs_2 month"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="2 week_vs_2 month"),
+  statdf[["2 week_vs_6 month"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="2 week_vs_6 month"),
+  statdf[["2 month_vs_6 month"]]%>%as.data.frame()%>%rownames_to_column(".")%>%mutate(comparison="2 month_vs_6 month")
+  ))%>%
+  mutate(stress=metaMDS(dist)[["stress"]])
+}
+
+saveRDS(extractadonis(bch_nmds_stats,bch_dist),"Dataframes/Stats/metabolites_adonis.rds")
+saveRDS(extractadonis(tax_nmds_stats,tax_dist),"Dataframes/Stats/taxonomy_adonis.rds")
+saveRDS(extractadonis(genes_nmds_stats,genes_dist),"Dataframes/Stats/genes_adonis.rds")
+saveRDS(extractadonis(MCBA_nmds_stats,genes_dist),"Dataframes/Stats/MCBA_adonis.rds")
+```
+# NMDS Plots
+Now we plot the NMDS
+```{r NMDS plots}
+nmdsplot<-function(data,title,dim,fsize){ 
+ggplot(data=data,aes(x=NMDS1,y=NMDS2,fill=TIME.POINT.2))+
+  geom_point(shape=21,size=2,show.legend=F)+
+  theme_bw(base_size = fsize)+
+  theme(panel.grid=element_blank(),
+        plot.title = element_text(hjust = 0.5))+
+  labs(color="")+
+    scale_y_continuous(limits=c(-1.5,1.5),breaks=c(-1.5,-1,-0.5,0,0.5,1,1.5))+
+    scale_x_continuous(limits=c(-2,2),breaks=c(-2,-1,0,1,2))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  ggtitle(title)
+ggsave(paste0("Figures/Diversity/",deparse(substitute(data)),".pdf"), height=dim, width=dim, units="in")
+  }
+
+nmdsplot(bch_nmds, "Metabolites",2,8)
+nmdsplot(genes_nmds, "Genes",2,8)
+nmdsplot(tax_nmds, "Taxa",2,8)
+nmdsplot(MCBA_nmds, "MCBA",2,8)
+```
+
+# Rich NMDS plots
+We're concerned there might be differences in our data due to sex/antibiotic usage/etc. and we have the metadata from the surveys. NMDS serves as a nice way to broadly look at this.
+```{r NMDS plots}
+for (i in c("TIME.POINT.2", colnames(samplekey_rich[6:20]))){
+a<-ggplot(data=bch_nmds%>%
+         left_join(.,samplekey_rich,by=c("CLIENT.IDENTIFIER","SUBJ.ID","TIME.POINT.2","prepost")),
+       aes_string(x="NMDS1",y="NMDS2",fill=i))+
+  geom_point(shape=21,size=2,show.legend=T)+
+    coord_equal()+
+  theme_bw(base_size = fsize)+
+  theme(panel.grid=element_blank(),
+        plot.title = element_text(hjust = 0.5))+
+  labs(color="")+
+    scale_y_continuous(limits=c(-1.5,1.5),breaks=c(-1.5,-1,-0.5,0,0.5,1,1.5))+
+    scale_x_continuous(limits=c(-2,2),breaks=c(-2,-1,0,1,2))+
+  ggtitle("Metabolites")
+
+b<-ggplot(data=genes_nmds%>%
+         left_join(.,samplekey_rich,by=c("CLIENT.IDENTIFIER","SUBJ.ID","TIME.POINT.2","prepost")),
+       aes_string(x="NMDS1",y="NMDS2",fill=i))+
+  geom_point(shape=21,size=2,show.legend=T)+
+    coord_equal()+
+  theme_bw(base_size = fsize)+
+  theme(panel.grid=element_blank(),
+        plot.title = element_text(hjust = 0.5))+
+  labs(color="")+
+    scale_y_continuous(limits=c(-1.5,1.5),breaks=c(-1.5,-1,-0.5,0,0.5,1,1.5))+
+    scale_x_continuous(limits=c(-2,2),breaks=c(-2,-1,0,1,2))+
+  ggtitle("Genes")
+
+c<-ggplot(data=tax_nmds%>%
+         left_join(.,samplekey_rich,by=c("CLIENT.IDENTIFIER","SUBJ.ID","TIME.POINT.2","prepost")),
+       aes_string(x="NMDS1",y="NMDS2",fill=i))+
+  geom_point(shape=21,size=2,show.legend=T)+
+    coord_equal()+
+  theme_bw(base_size = fsize)+
+  theme(panel.grid=element_blank(),
+        plot.title = element_text(hjust = 0.5))+
+  labs(color="")+
+    scale_y_continuous(limits=c(-1.5,1.5),breaks=c(-1.5,-1,-0.5,0,0.5,1,1.5))+
+    scale_x_continuous(limits=c(-2,2),breaks=c(-2,-1,0,1,2))+
+  ggtitle("Taxonomy")
+
+d<-ggplot(data=MCBA_nmds%>%
+         left_join(.,samplekey_rich,by=c("CLIENT.IDENTIFIER","SUBJ.ID","TIME.POINT.2","prepost")),
+       aes_string(x="NMDS1",y="NMDS2",fill=i))+
+  geom_point(shape=21,size=2,show.legend=T)+
+    coord_equal()+
+  theme_bw(base_size = fsize)+
+  theme(panel.grid=element_blank(),
+        plot.title = element_text(hjust = 0.5))+
+  labs(color="")+
+    scale_y_continuous(limits=c(-1.5,1.5),breaks=c(-1.5,-1,-0.5,0,0.5,1,1.5))+
+    scale_x_continuous(limits=c(-2,2),breaks=c(-2,-1,0,1,2))+
+  ggtitle("MCBA")
+
+l<-if(i=="FMT_response_ordinal"){"bottom"}else{"right"}
+  
+ggarrange(c,b,a,d, ncol=2,nrow=2, common.legend=T,legend=l)%>%
+  annotate_figure(.,top=text_grob(i))
+
+ggsave(paste0("Figures/NMDS_metadata/",i,".pdf"),height=4,width=5)
+
+  }
+```
+Nothing pops out as impacting the data, especially when compared to the sampling timepoints.
+
+# Alpha Diversity
+We know from other studies the alpha diversity will likely increase, lets show that here as a box plot.
+```{r alpha diversity}
+## Alpha Diversity
+alpha<-tax_raw%>%
+  filter(str_detect(clade_name,";s__"))%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-clade_name)%>%
+  mutate("CLIENT.IDENTIFIER"=factor(CLIENT.IDENTIFIER, levels=samplekey$CLIENT.IDENTIFIER))%>%
+  group_by(CLIENT.IDENTIFIER)%>%
+  summarize(shannon=diversity(value,index="shannon"),
+            invsimpson=diversity(value,index="invsimpson"))%>%
+  left_join(.,samplekey, by="CLIENT.IDENTIFIER")
+
+alpha_stats<-alpha%>%
+  select(shannon,TIME.POINT.2,SUBJ.ID)%>%
+  complete(TIME.POINT.2,SUBJ.ID,fill=list(shannon=NA))%>%
+  arrange(SUBJ.ID)%>%
+  pairwise_wilcox_test(shannon ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")
+
+ggplot(alpha, aes(x=TIME.POINT.2,y=shannon))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",dotsize=.8)+
+  geom_boxplot(outlier.alpha = 0,alpha=0)+
+  theme_bw(base_size = 8)+
+  theme(panel.grid.major.x =element_blank(),
+        legend.position="top")+
+  labs(x="",
+       y="Shannon Diversity",
+       fill="")+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  scale_y_continuous(limits=c(0,5),expand=c(0,0,0,0))+
+  stat_pvalue_manual(filter(alpha_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     tip.length=0.01,
+                     step.increase=0.05,
+                     inherit.aes=F)
+
+ggsave(paste0("Figures/Diversity/alpha_diversity.pdf"), height=3.25, width=3.25, units="in")
+
+saveRDS(alpha_stats,"Dataframes/Stats/Shannon Diversity_Wilcox SR_holm.rds")
+```
+
+#Species Stacked Barplots
+```{r}
+phylo_all<-tax_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-clade_name)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER, levels=samplekey$CLIENT.IDENTIFIER))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(TIME.POINT.2=factor(TIME.POINT.2,levels=c("Pre","2 week","2 month","6 month")))%>%
+  mutate(simplename=str_sub(clade_name,regexpr("\\_{2}[^\\;]*$", clade_name)+2,999))%>%
+  mutate(taxlevel=str_sub(clade_name,regexpr("\\_{2}[^\\;]*$", clade_name)-1,regexpr("\\_{2}[^\\;]*$", clade_name)-1))%>%
+  filter(taxlevel=="f")%>%
+  mutate(uptax=str_sub(clade_name,str_locate(clade_name,";p__")[,"end"]+1,str_locate(clade_name,";c__")[,"start"]-1))%>%
+  arrange(-value)
+  
+phylo_by_time<-phylo_all%>%
+  group_by(TIME.POINT.2,clade_name,simplename,uptax)%>%
+  summarize(mean=mean(value))
+  
+
+toptaxa<-phylo_by_time%>%
+  arrange(-mean)%>%
+  group_by(TIME.POINT.2)%>%
+  mutate(count=1:n())%>%
+  filter(count<=10)%>%
+  ungroup()%>%
+  select(simplename,uptax,mean)%>%
+  group_by(simplename,uptax)%>%
+  summarize(mean_all=mean(mean))%>% #put the biggest ones on top
+  mutate(uptax=factor(uptax,levels=c("Proteobacteria","Firmicutes","Firmicutes_A","Firmicutes_C","Bacteroidota","Verrucomicrobiota","Actinobacteriota")))%>%
+  arrange(uptax,-mean_all)%>%
+  mutate(simplename=factor(simplename,levels=unique(.$simplename)))
+
+
+phylo_time_plot<-phylo_by_time%>%
+  mutate(simplename=fct_inorder(simplename))%>%
+  mutate(uptax=fct_inorder(uptax))%>%
+  mutate(Taxonomy=factor(if_else(simplename %in% toptaxa$simplename,simplename,"Other"),levels=c(levels(toptaxa$simplename),"Other")))
+
+ggplot(phylo_time_plot, aes(fill=Taxonomy,y=mean,x=TIME.POINT.2))+
+  geom_bar(position="stack",stat="identity")+
+  theme_bw(base_size = 8)+
+  theme(panel.grid=element_blank(),
+        legend.key.size=unit(0.12,"in"))+
+  scale_y_continuous( expand=c(0,0))+
+  labs(x="",y="Relative Abundance",fill="Family")+
+  scale_fill_manual(values=anno_color$familyplot)
+
+ggsave("Figures/Diversity/stacked_taxonomy_barplot_by_time.pdf", width=4.5,height=2.8,units="in")
+
+ggplot(phylo_all%>%
+  mutate(Taxonomy=factor(if_else(simplename %in% toptaxa$simplename,simplename,"Other"),levels=c(levels(toptaxa$simplename),"Other"))), aes(fill=Taxonomy,y=value,x=CLIENT.IDENTIFIER))+
+  geom_bar(position="stack",stat="identity")+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=-90))+
+  scale_y_continuous( expand=c(0,0))+
+  labs(x="",y="Relative Abundance",fill="Family")+
+  scale_fill_manual(values=anno_color$familyplot)
+
+ggsave(paste0("Figures/Supplementals/stacked_taxonomy_barplot_all.pdf"), width=7,height=5,units="in")
+```
+

@@ -1,0 +1,723 @@
+---
+title: "MCBAs"
+author: "Sam McMillan"
+date: "2023-12-06"
+output: html_document
+---
+
+# setup
+```{r setup, include=T}
+library(tidyverse)
+library(pheatmap)
+library(randomForest)
+library(janitor)
+library(psych)
+library(xlsx)
+library(ggtext)
+library(vegan)
+library(ggpubr)
+library(rstatix)
+
+sessionInfo()
+```
+
+# get data
+```{r}
+
+samplekey<-readRDS("Dataframes/samplekey.rds")
+pathway_raw<-readRDS("Dataframes/pathway_raw.rds")
+fam_for_cor<-readRDS("Dataframes/fam_for_cor.rds")
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+tax_raw<-readRDS("Dataframes/tax_raw.rds")
+MCBA_raw<-readRDS("Dataframes/MCBA_raw.rds")
+MCBA_metadata<-readRDS("Dataframes/MCBA_metadata.rds")
+MCBA_siglist<-readRDS("Dataframes/Stats/MCBA_siglist.rds")
+MCBA_for_cor<-readRDS("Dataframes/MCBA_for_cor.rds")
+pathway_siglist<-readRDS("Dataframes/Stats/pathway_siglist.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# Scale Data
+I want to median scale it to be similar to metabolon, but I don't like the minimum imputation so I'll leave them as NA
+```{r}
+MCBA_median_scaled<-MCBA_raw%>%
+  filter(rowSums(.[2:46]==0)<45)%>% #filter out MCBA with no responses
+  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  group_by(BA)%>%
+  mutate(BA=fct_inorder(BA))%>%
+  filter(value!=0)%>%
+  mutate(value=value/median(value))%>%
+  as.data.frame()%>%
+  complete(CLIENT.IDENTIFIER, BA, fill=list(value=NA))%>%
+  spread(key="CLIENT.IDENTIFIER",value="value")
+```
+
+# Random Forest
+```{r}
+#Random Forest
+set.seed(102309)
+MCBA_forest<-MCBA_raw%>%
+  column_to_rownames("BA")%>%
+  t()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(samplekey,., by="CLIENT.IDENTIFIER")%>%
+  select(-CLIENT.IDENTIFIER,-TIME.POINT.2,-SUBJ.ID)%>%
+  clean_names()%>%
+  randomForest(prepost ~ .,data=., proximity=T, importance=TRUE, ntree=1000)
+
+#Prepare to Plot
+MCBA_forest_plot<-MCBA_forest$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("ba")%>%
+  left_join(.,MCBA_metadata%>%mutate(ba=janitor::make_clean_names(BA)),by="ba")%>%
+  arrange(-MeanDecreaseAccuracy)%>%
+  group_by(dir)%>%
+  mutate(count=1:n())%>%
+  arrange(dir,MeanDecreaseAccuracy)%>%
+  filter(BA %in% MCBA_siglist$BA)%>%
+  filter(MeanDecreaseAccuracy>0)%>%
+  mutate(plotnames=str_remove(BA,"\\*"))%>%
+  mutate(plotnames=if_else(BA %in% MCBA_siglist$BA,paste("*", plotnames),plotnames))%>%
+  mutate(plotnames=fct_inorder(plotnames))%>%
+  mutate(BA=fct_inorder(BA))
+
+#plot
+ggplot(data=MCBA_forest_plot, aes(y=MeanDecreaseAccuracy,x=BA,fill=Core))+
+  geom_point(size=2,shape=21)+
+  scale_fill_manual(values=anno_color$Core)+
+  coord_flip()+
+  theme_bw()+
+  labs(fill="",shape="", y="Mean Decrease Accuracy        ",x="")+
+  theme(axis.text.y=element_text(size=6),
+        axis.text.x=element_text(size=6),
+        axis.title.y=element_text(size=8),
+        legend.position="top",
+        legend.text = element_text(size=6),
+        legend.key.size = unit(c(0),"in"),
+        legend.box.margin=unit(c(0,0.5,-.05,0),"in"),
+        plot.margin = unit(c(0,0.25,0,0),"in"))
+
+ggsave("Figures/MCBA/MCBA_forest_sig.pdf", height=4.2, width=2.5, units="in")
+
+# For writing
+MCBA_raw%>%filter(rowSums(.[2:46]==0)==45)%>%select(BA)
+
+length(unique(MCBA_siglist$BA))
+
+nrow(MCBA_forest$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("ba")%>%
+  left_join(.,MCBA_metadata%>%mutate(ba=janitor::make_clean_names(BA)),by="ba")%>%
+  arrange(-MeanDecreaseAccuracy)%>%
+  group_by(dir)%>%
+  mutate(count=1:n())%>%
+  arrange(dir,MeanDecreaseAccuracy)%>%
+  filter(MeanDecreaseAccuracy>0))
+
+MCBA_forest_plot%>%
+  group_by(dir)%>%
+  summarize(count=n())
+
+MCBA_forest_plot%>%
+  group_by(dir,Core)%>%
+  summarize(count=n())%>%
+  spread(dir,count)
+
+MCBA_forest_plot%>%
+  group_by(dir,Amino_Acid)%>%
+  summarize(count=n())%>%
+  spread(dir,count)
+
+saveRDS(as.vector(MCBA_forest_plot$BA),"Dataframes/MCBA order.rds")
+saveRDS(MCBA_forest$importance,"Dataframes/Stats/Full MCBA forest.rds")
+```
+
+
+# heatmap
+```{r}
+# Abundance Heatmap
+MCBA_by_time<-MCBA_median_scaled%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  select(BA,TIME.POINT.2,value)%>%
+  group_by(TIME.POINT.2,BA)%>%
+  replace_na(list(value=0))%>%
+  summarize(mean=mean(value))%>% #Mean of timepoints
+  mutate(mean=if_else(mean==0,NA,mean))%>%
+  spread(key='TIME.POINT.2',value="mean")%>%
+  filter(BA %in% MCBA_forest_plot$BA)%>%
+  mutate(BA=factor(BA, levels=rev(MCBA_forest_plot$BA)))%>%
+  arrange(BA)%>%
+  mutate_if(is.numeric,log10)%>%
+  left_join(.,MCBA_metadata,by="BA")%>%
+  column_to_rownames("BA")
+
+pheatmap(MCBA_by_time[1:4],
+         cluster_cols=F,
+         cluster_rows=F,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         border_color="grey20",
+         cellheight = 12,
+         na_col="white",
+         cellwidth = 50,
+         fontsize = 14,
+         filename="Figures/MCBA/MCBA_heatmap_RF order.pdf",
+         width=14,
+         height=14
+)
+
+# All MCBA Heatmap sort
+MCBA_hm_All<-MCBA_median_scaled%>%
+  mutate_if(is.numeric,log10)%>%
+  left_join(.,MCBA_metadata,by="BA")%>%
+  #filter(BA %in% MCBA_siglist$BA)%>%
+  column_to_rownames("BA")%>%
+  mutate_if(is.numeric,~replace(., is.na(.), -5)) #Fill with very small 10e-5 for clustering, also makes non-zero visible
+
+pheatmap(MCBA_hm_All%>%arrange(Core,Amino_Acid)%>%select(1:45),
+         annotation_row=MCBA_hm_All[c(46,47)],
+         annotation_col=samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2)%>%column_to_rownames("CLIENT.IDENTIFIER"),
+         annotation_colors = anno_color,
+         cluster_cols=T,
+         cluster_rows=T,
+         color=colorRampPalette(c("white","grey","black"),bias=1)(50),
+         border_color="grey20",
+         na_col="white",
+         fontsize = 6,
+         filename="Figures/MCBA/MCBA_heatmap_all_xy.pdf",
+         width=8,
+         height=11
+)
+```
+
+# Correlate with Family
+```{r}
+#Correlation to Family
+identical(rownames(MCBA_for_cor[,which(colnames(MCBA_for_cor) %in% MCBA_forest_plot$BA)]),rownames(fam_for_cor))
+
+cor_MCBA_fam<-corr.test(MCBA_for_cor[,which(colnames(MCBA_for_cor) %in% MCBA_forest_plot$BA)],fam_for_cor,method="spearman",adjust="holm")
+
+MCBA_fam_cor_plot<-left_join(as.data.frame(cor_MCBA_fam$p.adj)%>%
+                              rownames_to_column("BA")%>%
+                              gather(key="key",value="p",-BA),
+                            as.data.frame(cor_MCBA_fam$r)%>%
+                              rownames_to_column("BA")%>%
+                              gather(key="key",value="r",-BA),by=c("BA","key"))%>%
+  mutate(BA=factor(BA, levels=rev(MCBA_forest_plot$BA)))%>%
+  filter(p<=0.05)%>%
+  select(-p)%>%
+  complete(BA,fill=list(key="drop",r=0))%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BA")%>%
+  select(-drop)
+
+tax_anno<-tax_metadata%>%
+  filter(!is.na(family))%>%
+  select(family,phylum)%>%
+  unique()%>%
+  remove_rownames()%>%
+  filter(phylum %in% names(anno_color$phylumplot))%>%
+  column_to_rownames("family")
+
+pheatmap(MCBA_fam_cor_plot,
+         annotation_col = tax_anno,
+         cluster_rows=F,
+         cluster_cols=T,
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         breaks=seq(from=-1,to=1,by=2/60),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 20,
+         fontsize = 14,
+         drop_levels = T,
+         filename="Figures/MCBA/MCBA_vs_fam_spearman.pdf",
+         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% tax_anno[colnames(MCBA_fam_cor_plot),"phylum"]]),
+         width=14,
+         height=17)
+
+saveRDS(cor_MCBA_fam$p.adj,"Dataframes/Stats/MCBA vs family spearman t test holm.rds")
+
+```
+
+# Boxplot by time
+```{r}
+MCBA_boxplot<-MCBA_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+  left_join(.,MCBA_metadata,by="BA")%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate()
+
+MCBA_boxplot_stats<-MCBA_boxplot%>%
+  ungroup()%>%
+  select(value,TIME.POINT.2,SUBJ.ID, BA)%>%
+  complete(TIME.POINT.2, SUBJ.ID, BA, fill=list(value=NA))%>%
+  left_join(.,MCBA_metadata%>%select(BA,Core,Amino_Acid),by="BA")%>%
+  group_by(Core,Amino_Acid)%>%
+    pairwise_wilcox_test(value ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="Core")%>%
+  mutate(sort=paste0(Core,Amino_Acid))%>%
+  mutate(y.position=log10(y.position)*1.1)%>%
+  mutate(xmin=ifelse(xmin>4,xmin-1,xmin))%>%
+  mutate(xmax=ifelse(xmax>4,xmax-1,xmax))
+
+#list of aa significant by wilcoxon or linear modelling
+target_aa<-c("Tau","Gly","Unconjugated","Ala","Ile/Leu","Val","Phe","Trp","Tyr","Ser" ,"Pro","Glu","Lys")
+
+MCBA_boxplot_sort<-MCBA_boxplot%>%
+         filter(Core %in%filter(MCBA_boxplot_stats,p.adj<0.05)$Core &
+           Amino_Acid %in% target_aa)%>%
+         mutate(Amino_Acid=factor(Amino_Acid,levels=target_aa))
+
+ggplot(data=MCBA_boxplot_sort,
+       aes(x=Core,y=value,fill=TIME.POINT.2, group=interaction(Core,TIME.POINT.2)))+
+  geom_point(shape=21,position=position_dodge(width=0.75),size=1,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  facet_wrap(~Amino_Acid,ncol=3)+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        axis.title.y=element_markdown(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "MCBA Abundance",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.07,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(MCBA_boxplot_stats,p.adj<0.05)%>%
+         mutate(Amino_Acid=factor(Amino_Acid,levels=levels(MCBA_boxplot_sort$Amino_Acid))), 
+                     label = "p.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="sort",
+                     inherit.aes=F)
+
+ggsave("Figures/MCBA/MCBA_Boxplots_by_time_wilcox.pdf",width=8.25, height=6)
+
+
+##Everything
+ggplot(data=MCBA_boxplot,
+       aes(x=Core,y=value,fill=TIME.POINT.2, group=interaction(Core,TIME.POINT.2)))+
+  geom_point(shape=21,position=position_dodge(width=0.75),size=1,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  facet_wrap(~Amino_Acid,ncol=5)+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        axis.title.y=element_markdown(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        axis.text.x=element_text(angle=-90),
+        strip.background=element_blank())+
+  labs(y = "MCBA Abundance",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.07,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(MCBA_boxplot_stats,p.adj<0.05)%>%
+         mutate(Amino_Acid=factor(Amino_Acid,levels=levels(MCBA_boxplot_sort$Amino_Acid))), 
+                     label = "p.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="sort",
+                     inherit.aes=F)
+
+ggsave("Figures/MCBA/MCBA_Boxplots_all_by_time_wilcox.pdf",width=8.25, height=8.5)
+```
+
+# Pre/Post Boxplot
+```{r}
+MCBA_boxplot<-MCBA_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+  left_join(.,MCBA_metadata,by="BA")%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+
+
+MCBA_siglist_prepost<-read_tsv("Maaslin output/MCBA_raw_prepost/all_results.tsv")%>%
+            left_join(.,MCBA_raw%>%select(BA)%>%mutate(feature=janitor::make_clean_names(BA)), by="feature")%>%
+  left_join(.,MCBA_metadata,by="BA")
+
+MCBA_boxplot_stats<-MCBA_boxplot%>%
+  ungroup()%>%
+  select(value,prepost,SUBJ.ID, BA)%>%
+  complete(prepost, SUBJ.ID, BA, fill=list(value=NA))%>%
+  left_join(.,MCBA_metadata%>%select(BA,Core,Amino_Acid),by="BA")%>%
+  group_by(Core,Amino_Acid)%>%
+  pairwise_t_test(value ~ prepost,  ##I'm using this for the convenient structure, will overwrite with linear modeling results
+                       p.adjust.method="holm",
+                       ref.group = "Pre")%>%
+  add_xy_position(x="Core")%>%
+  select(-c(p,p.signif,p.adj,p.adj.signif))%>%
+  left_join(.,MCBA_siglist_prepost%>%
+              select(BA,pval,qval,Core,Amino_Acid),
+            by=c("Core","Amino_Acid"))%>%
+  ungroup()%>%
+  mutate(q.adj.signif=symnum(qval,
+                             cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), 
+                             symbols = c("****", "***", "**", "*", "")))%>%
+  mutate(sort=paste0(Core,Amino_Acid))%>%
+  mutate(y.position=log10(y.position)*1.1)
+
+#sigAA
+(MCBA_siglist%>%left_join(.,MCBA_metadata,by="BA")%>%ungroup()%>%select(Amino_Acid)%>%unique())$Amino_Acid
+
+#list of aa significant by linear modelling
+aa_names<-c("Taurine","Glycine","Alanine","Isoleucine/Leucine","Valine","Phenylalanine","Tryptophan","Tyrosine","Serine","Glutamate","Histidine","Lysine")
+names(aa_names)<-c("Tau","Gly","Ala","Ile_Leu","Val","Phe","Trp","Tyr","Ser" ,"Glu","His","Lys")
+
+MCBA_boxplot_sort<-MCBA_boxplot%>%
+         filter(Core %in%filter(MCBA_boxplot_stats,qval<0.05)$Core &
+           Amino_Acid %in% names(aa_names))%>%
+         mutate(Amino_Acid=factor(Amino_Acid,levels=names(aa_names)))
+
+ggplot(data=MCBA_boxplot_sort,aes(x=Core,y=value,fill=prepost, group=interaction(Core,prepost)))+
+  geom_jitter(shape=21,
+              position=position_jitterdodge(dodge.width=0.75,jitter.width=0.2),
+              size=0.8,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  facet_wrap(~Amino_Acid,ncol=3,labeller=labeller(Amino_Acid=aa_names))+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        axis.title.y=element_markdown(),
+        axis.text.x=element_text(angle=-90),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "MCBA Abundance",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.1,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(MCBA_boxplot_stats,qval<0.05)%>%
+                      filter(Amino_Acid %in% names(aa_names))%>%
+                       droplevels()%>%
+                      mutate(x=as.numeric(Core))%>%
+                      mutate(xmin=x-0.2)%>%
+                      mutate(xmax=x+0.2)%>%
+                      mutate(Amino_Acid=factor(Amino_Acid,levels=levels(MCBA_boxplot_sort$Amino_Acid))), 
+                     label = "q.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="sort",
+                     inherit.aes=F)
+
+ggsave("Figures/MCBA/MCBA_Boxplots.pdf",width=8.25, height=4)
+
+
+#Deconjugated 
+(MCBA_siglist%>%left_join(.,MCBA_metadata,by="BA")%>%filter(Amino_Acid=="Deconjugated")%>%unique())$BA
+
+
+#order and add bMCA as that's in the amino acid plots
+decon_order<-c("CA","7-keto DCA","CDCA","DCA","12-oxo LCA","EDCA","LCA","3-oxo LCA", "isoLCA", "aMCA","bMCA", "wMCA","HCA", "HDCA")
+
+decon_stats<-MCBA_boxplot_stats%>%
+            filter(qval<0.05 & Amino_Acid=="Deconjugated" & BA %in% decon_order)%>%
+              mutate(BA=factor(BA, levels=decon_order))%>%
+  mutate(x=as.numeric(BA))%>%
+  mutate(xmin=x-0.2)%>%
+  mutate(xmax=x+0.2)
+
+
+ggplot(data=MCBA_boxplot%>%
+         filter(Amino_Acid=="Deconjugated" & BA %in% decon_order)%>%
+         mutate(BA=factor(BA, levels=decon_order)),
+       aes(x=BA,y=value,fill=prepost, group=interaction(BA,prepost)))+
+  geom_jitter(shape=21,
+              position=position_jitterdodge(dodge.width=0.75,jitter.width=0.2),
+              size=0.8,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        axis.title.y=element_markdown(),
+        axis.text.x=element_text(angle=-90),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.1,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(decon_stats,
+                     label = "q.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="sort",
+                     inherit.aes=F)
+
+ggsave("Figures/MCBA/MCBA_Boxplots_Unconjugated.pdf",width=5.6, height=1.6)
+
+###Now everything for supp
+ggplot(data=MCBA_boxplot%>%filter(Amino_Acid!="Deconjugated"),aes(x=Core,y=value,fill=prepost, group=interaction(Core,prepost)))+
+  geom_jitter(shape=21,
+              position=position_jitterdodge(dodge.width=0.75,jitter.width=0.2),
+              size=0.8,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  facet_wrap(~Amino_Acid,ncol=3)+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        axis.title.y=element_markdown(),
+        axis.text.x=element_text(angle=-90),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "MCBA Abundance",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.1,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(MCBA_boxplot_stats,qval<0.05)%>%
+                      filter(Amino_Acid!="Deconjugated")%>%
+                      mutate(x=as.numeric(Core))%>%
+                      mutate(xmin=x-0.2)%>%
+                      mutate(xmax=x+0.2), 
+                     label = "q.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="sort",
+                     inherit.aes=F)
+
+ggsave("Figures/Supplementals/MCBA_Boxplots_all.pdf",width=8.25, height=11)
+
+
+```
+
+# Correlation to Pathway
+I don't think I'll use this
+```{r}
+#Correlation to Pathway
+pathway_for_cor<-pathway_raw%>%
+   filter(pathway %in% pathway_siglist$pathway)%>%
+  separate(pathway, into=c("top","rest"), sep=";",extra="merge")%>%
+  filter(str_detect(top,"Amino-acid_biosynthesis"))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-top,-rest)%>%
+  group_by(rest,CLIENT.IDENTIFIER)%>%
+  summarize(CPM=sum(CPM))%>%
+  spread(key="CLIENT.IDENTIFIER",value="CPM")%>%
+  select(1, samplekey$CLIENT.IDENTIFIER)%>%
+  column_to_rownames("rest")%>%
+  t()
+
+identical(rownames(MCBA_for_cor),rownames(pathway_for_cor))
+
+cor_MCBA_path<-corr.test(MCBA_for_cor[,which(colnames(MCBA_for_cor) %in% MCBA_forest_plot$BA)],pathway_for_cor,method="spearman",adjust="holm")
+
+MCBA_path_cor_plot<-left_join(as.data.frame(cor_MCBA_path$p.adj)%>%
+                              rownames_to_column("BA")%>%
+                              gather(key="key",value="p",-BA),
+                            as.data.frame(cor_MCBA_path$r)%>%
+                              rownames_to_column("BA")%>%
+                              gather(key="key",value="r",-BA),by=c("BA","key"))%>%
+  filter(p<=0.05)%>%
+  select(-p)%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BA")%>%
+  t()
+
+pheatmap(MCBA_path_cor_plot,
+         cluster_rows=T,
+         cluster_cols=T,
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         border_color="grey20",
+         breaks=seq(-1,1,by=2/60),
+         cellheight = 12,
+         cellwidth = 14,
+         fontsize = 14,
+         drop_levels = T,
+         filename="Figures/MCBA/Sig_MCBA_vs_sig_aa_pathway_spearman.pdf",
+         width=20,
+         height=17)
+```
+
+# Correlate to Amino Acids
+I don't think this is helpful either
+```{r}
+###Correlation to AA
+AA_for_cor<-bch_for_cor%>%
+  select(c("lysine", "serine", "valine", "alanine",
+           "histidine","glycine","leucine", "proline" ,
+           "arginine","cysteine","tyrosine"  ,
+           "aspartate","glutamate", "glutamine", "threonine",
+           "asparagine","isoleucine", "methionine","tryptophan","phenylalanine",
+           "taurine","ornithine","citrulline","hydroxyproline", #non proteinogenic amino acids
+           "isovalerate (C5)", #oxidative leucine
+           "alpha-hydroxyisocaproate",# reductive leucine
+           "isocaproate (i6:0)", #reductive leucine
+           "5-aminovalerate", # reductive proline
+           "4-hydroxyphenylacetate", #oxidative tyrosine
+           "p-cresol", # oxidative tyrosine
+           "3-(4-hydroxyphenyl)propionate", # reductive tyrosine
+           "indoleacetate", # oxidative Tryptophan
+           "phenylacetate", # oxidative phenylalanine
+           "4-imidazoleacetate", #oxidative histidine
+           "3-phenylpropionate (hydrocinnamate)"))
+
+identical(rownames(MCBA_for_cor),rownames(AA_for_cor))
+
+cor_MCBA_AA<-corr.test(MCBA_for_cor,AA_for_cor,method="spearman",adjust="holm")
+
+MCBA_AA_cor_plot<-left_join(as.data.frame(cor_MCBA_AA$p.adj)%>%
+                               rownames_to_column("BA")%>%
+                               gather(key="key",value="p",-BA),
+                             as.data.frame(cor_MCBA_AA$r)%>%
+                               rownames_to_column("BA")%>%
+                               gather(key="key",value="r",-BA),by=c("BA","key"))%>%
+  filter(p<=0.05)%>%
+  select(-p)%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BA")
+
+pheatmap(MCBA_AA_cor_plot,
+         cluster_rows=T,
+         cluster_cols=T,
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         breaks=seq(from=-1,to=1,by=2/60),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 20,
+         fontsize = 14,
+         drop_levels = T,
+         filename="Figures/MCBA/MCBA_vs_AA_spearman.pdf",
+         width=14,
+         height=17)
+
+```
+# Correlate with strains
+```{r}
+spec_for_cor<-tax_raw%>%
+        filter(str_detect(clade_name,"\\;s\\_\\_*"))%>%
+        #mutate(clade_name=str_remove(clade_name,".*\\;s\\_\\_"))%>%
+        filter(clade_name!="")%>%
+  column_to_rownames("clade_name")%>%
+  t()%>%
+  as.data.frame()
+
+identical(rownames(MCBA_for_cor[,which(colnames(MCBA_for_cor) %in% MCBA_forest_plot$BA)]),rownames(spec_for_cor))
+
+cor_MCBA_spec<-corr.test(MCBA_for_cor[,which(colnames(MCBA_for_cor) %in% MCBA_forest_plot$BA)],spec_for_cor,method="spearman",adjust="holm")
+
+MCBA_spec_cor_plot<-left_join(as.data.frame(cor_MCBA_spec$p.adj)%>%
+                               rownames_to_column("BA")%>%
+                               gather(key="key",value="p",-BA),
+                             as.data.frame(cor_MCBA_spec$r)%>%
+                               rownames_to_column("BA")%>%
+                               gather(key="key",value="r",-BA),by=c("BA","key"))%>%
+  mutate(BA=factor(BA,levels=rev(MCBA_forest_plot$BA)))%>%
+  filter(p<=0.05)%>%
+  complete(BA,fill=list(key="drop",r=NA))%>%
+  select(-p)%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BA")%>%
+  select(-drop)
+
+
+cor_anno<-as.data.frame(colnames(MCBA_spec_cor_plot))%>%
+  dplyr::rename("clade_name"=1)%>%
+  separate(clade_name,into=c("kingdom","phylum","class","order","family","genus","species"),sep="\\;.\\_\\_",remove=F)%>%
+  column_to_rownames("clade_name")
+
+pheatmap(MCBA_spec_cor_plot,
+         annotation_col = cor_anno%>%select(phylum),
+         labels_col=cor_anno$species,
+         cluster_rows=F,
+         cluster_cols=T,
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         breaks=seq(from=-1,to=1,by=2/60),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 20,
+         fontsize = 14,
+         drop_levels = T,
+         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% cor_anno$phylum]),
+         filename="Figures/MCBA/MCBA_vs_spec_spearman_RF.pdf",
+         width=14,
+         height=17)
+
+```
+
+
+# low vs high this is just a QC step
+```{r}
+baker_labels<-read.csv("Data and Metadata/MCBA_sampleID.csv")
+
+MCBA_raw_low<-read.xlsx("Data and Metadata/20231210_Neg_BA_Updated_Full_IsomerIDed.xlsx",sheetIndex = 2)%>%
+      dplyr::rename("BA"="Molecule.Name")%>%
+      rename_with(~str_remove(.,".Total.Area.MS1"))%>%
+      rename_at(baker_labels$Rank, ~ baker_labels$CLIENT.IDENTIFIER)%>%
+      mutate(source="low")%>%
+      gather(key="CLIENT.IDENTIFIER",value="value",-BA,-source)%>%
+      mutate(BA=str_remove(BA,"\\*"))
+
+lvh<-MCBA_raw_low%>%
+    rbind(.,MCBA_raw%>%
+                gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+                filter(BA %in% MCBA_raw_low$BA)%>%
+                mutate(source="high"))%>%
+  group_by(source,BA)%>%
+  arrange(-value)%>%
+  mutate(rankorder=1:n())%>%
+  mutate(permax=value/max(value))%>%
+  mutate(value=if_else(value==0,NA,value))%>%
+  mutate(medscale=value/median(value,na.rm=T))%>%
+  mutate(value=if_else(is.na(value),0,value))%>%
+  mutate(medscale=log10(if_else(is.na(medscale),0,medscale)))
+
+v<-ggplot(lvh%>%select(-rankorder,-permax,-medscale)%>%spread(key="source",value="value"),aes(y=high,x=low,color=BA))+
+  geom_point()+
+  theme_bw()+
+  scale_x_log10()+
+  scale_y_log10()+
+  ggtitle("Values")
+
+m<-ggplot(lvh%>%select(-value,-rankorder,-permax)%>%spread(key="source",value="medscale"),aes(y=high,x=low,color=BA))+
+  geom_point()+
+  theme_bw()+
+  ggtitle("scaled")
+
+r<-ggplot(lvh%>%select(-value,-permax,-medscale)%>%spread(key="source",value="rankorder"),aes(y=high,x=low,color=BA))+
+  geom_point()+
+  theme_bw()+
+  ggtitle("Rank order")
+
+pm<-ggplot(lvh%>%select(-value,-rankorder,-medscale)%>%spread(key="source",value="permax"),aes(y=high,x=low,color=BA))+
+  geom_point()+
+  theme_bw()+
+  ggtitle("percent max")
+
+ggarrange(v,m,r,pm,nrow=2,ncol=2,common.legend = T)
+ggsave("Figures/MCBA/low vs high check.pdf",width=7, height=6)
+
+```

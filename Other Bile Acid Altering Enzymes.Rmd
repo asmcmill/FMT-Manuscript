@@ -1,0 +1,150 @@
+---
+title: "Other Bile Acid Altering Enzymes"
+author: "Sam McMillan"
+date: "2023-12-06"
+output: html_document
+---
+```{r setup, require=T, include=T}
+library(tidyverse)
+library(pheatmap)
+library(psych)
+library(ggpubr)
+library(muscle)
+library(curl)
+library(rstatix)
+
+sessionInfo()
+```
+
+# Data
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+genes_raw<-readRDS("Dataframes/genes_raw.rds")
+bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+ba_order<-readRDS("Dataframes/Bile acid order.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# Pull out enzymes
+```{r}
+bae_raw<-genes_raw%>%
+  filter(!str_detect(genefamily,"\\|"))%>%
+  separate(genefamily,into=c("Uniref","desc"),sep="\\: ",extra="merge")%>%
+  filter(str_detect(desc,regex("bile|hydroxysteroid|hydroxycholanate|choloylglycine|bai",ignore_case=T)))
+
+#export for hand annotation
+write.csv(bae_raw%>%
+        select(desc)%>%
+        unique(),"Data and Metadata/bae_genes_raw.csv",row.names=F)
+# read back in my hand annotation
+genelist<-read.csv("Data and Metadata/bae_genes_annotated.csv")
+
+saveRDS(bae_raw,"Dataframes/bae_raw.rds")
+
+```
+
+#Boxplots
+```{r}
+bae_anno<-bae_raw%>%
+  filter(desc %in% genelist$desc)%>%
+  left_join(.,genelist, by="desc")%>%
+  select(annotation,samplekey$CLIENT.IDENTIFIER)%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-annotation)%>%
+  group_by(annotation,CLIENT.IDENTIFIER)%>%
+  summarize(sum=sum(CPM))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(annotation=fct_inorder(annotation))
+  
+bae_boxplot_stats<-bae_anno%>%
+  ungroup()%>%
+  select(annotation,sum,TIME.POINT.2,SUBJ.ID)%>%
+  complete(TIME.POINT.2, SUBJ.ID,annotation, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  group_by(annotation)%>%
+  pairwise_wilcox_test(sum ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")
+
+ggplot(data=bae_anno,aes(x=TIME.POINT.2,y=sum,color=TIME.POINT.2))+
+  geom_jitter(width=.2)+
+  geom_boxplot(alpha=0,color="black")+
+  facet_wrap(~annotation, scales="free_y",shrink=T,nrow=5)+
+  theme_bw()+
+  theme(text=element_text(size=12),
+        legend.position="bottom",
+        axis.text.x=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "Total Gene Abundance (CPM)",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(expand=c(0,0,.2,0))+
+  scale_color_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(bae_boxplot_stats,p.adj<0.05), 
+                     label = "p.adj.signif", 
+                     step.increase=.2,
+                     step.group.by = "annotation")
+
+ggsave("Figures/Supplementals/Bile acid genes boxplots.pdf",height=6,width=7.1,units="in")  
+
+saveRDS(bae_boxplot_stats,"Dataframes/Stats/BAE wilcox signed rank holm.rds")
+```
+
+# Species Plot
+```{r}
+bae_species<-genes_raw%>%
+  filter(str_detect(genefamily,"\\|"))%>%
+  separate(genefamily,into=c("Uniref","desc"),sep="\\: ",extra="merge")%>%
+  separate(desc,into=c("desc","taxa"),sep = "\\|",fill="right")%>%
+   filter(desc %in% genelist$desc)%>%
+  separate(taxa,into=c("genus","species"),sep = "\\.",fill="right")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(-species),by="genus")%>%
+  select(Uniref,phylum,species,everything())%>%
+  left_join(.,genelist, by="desc")%>%
+  select(annotation,phylum,family,genus,species,samplekey$CLIENT.IDENTIFIER)%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-annotation,-phylum,-family,-species,-genus)%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER, levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  filter(!is.na(species))%>%
+  mutate(family=str_remove(family,"f__"))%>%
+      mutate(phylum=case_when(!is.na(phylum)~phylum, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Firmicutes_unclassified","Clostridiales_unclassified")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus=="Eubacterium"~"Eubacteriaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae"))%>%
+  mutate(family=if_else(is.na(family),"Other",family))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))
+
+ggplot(bae_species,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_wrap(~annotation,scales="free_y",nrow=5)+
+  theme(text=element_text(size=12),
+        legend.text=element_text(size=6),
+        legend.key.size = unit(0.15,'in'),
+        legend.position="right",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        strip.background=element_blank(),
+        axis.text.x=element_blank())+
+  labs(y = "Total Gene Abundance (CPM)",
+       x= "",
+       fill="Family")+
+  guides(fill=guide_legend(ncol=1))+
+  scale_fill_manual(values = anno_color$familyplot)
+
+ggsave("Figures/Supplementals/Bile acid genes family plot.pdf",height=5.5,width=8.5,units="in") 
+
+```
+

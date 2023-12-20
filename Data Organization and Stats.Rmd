@@ -1,0 +1,290 @@
+---
+title: "FMT Manuscript Data Organization and Stats"
+author: "Sam McMillan"
+date: "2023-11-28"
+output: html_document
+---
+
+```{r setup, require=T, warning=F}
+library(tidyverse)
+library(janitor)
+library(xlsx)
+library(Maaslin2)
+library(rJava)
+
+sessionInfo()
+```
+# Data and metadata import and organization
+```{r data}
+#sample metadata
+samplekey<-read.csv("Data and Metadata/samplekey.csv")%>%
+          mutate(CLIENT.IDENTIFIER=fct_inorder(CLIENT.IDENTIFIER))%>%
+          mutate(TIME.POINT.2=factor(TIME.POINT.2, levels=c("Pre", "2 week", "2 month", "6 month")))%>%
+          mutate(prepost=factor(prepost,levels=c("Pre","Post")))%>%
+          mutate(SUBJ.ID=fct_inorder(SUBJ.ID))
+
+samplekey_rich<-read.csv("Data and Metadata/rich_sample_metadata.csv")%>%
+  left_join(samplekey,.,by=c("SUBJ.ID"="Recipient"))%>%
+  mutate(acid_suppress=if_else(prepost=="Pre",acid_suppress_pre,acid_suppress_post))%>%
+  select(-c(acid_suppress_pre,acid_suppress_post))%>%
+  fill(colnames(.),.direction="down") #fills NA for R9_1B
+
+# Metabolomics Data
+.jgc() #Java Garbage collection to make sure I have enough RAM to read the files
+bch_raw<-read.xlsx2("Data and Metadata/NCSU-01-18VW CDT - 20180327.xlsx","ScaledImpData",startRow=3, check.names=F,colIndex=c(2,14:73))%>%
+  slice_tail(n=924)%>%
+  rename("BIOCHEMICAL"=1)%>%
+  rename_with(~str_replace(., " ","_"))%>% #Unify with metagenomics names
+  select(BIOCHEMICAL,levels(samplekey$CLIENT.IDENTIFIER))%>%
+  mutate_at(2:46,~as.numeric(.))%>%
+  as.data.frame()
+
+# Target BA & MCBA Data
+baker_labels<-read.csv("Data and Metadata/MCBA_sampleID.csv")
+
+BA_import<-read.xlsx("Data and Metadata/20231210_Neg_BA_Updated_Full_IsomerIDed.xlsx",sheetIndex = 1)%>%
+      dplyr::rename("BA"="Molecule.Name")%>%
+      rename_with(~str_remove(.,".Total.Area.MS1"))%>%
+      rename_at(baker_labels$Rank, ~ baker_labels$CLIENT.IDENTIFIER)%>%
+      select(BA,samplekey$CLIENT.IDENTIFIER)
+
+MCBA_import<-read.xlsx("Data and Metadata/20231201_FMT_BA_MCBA_Neg_Full.xlsx",sheetIndex = 1)%>%
+  select(-1)%>%
+  dplyr::slice(22:120)%>%
+  dplyr::rename("BA"="Molecule.Name")%>%
+  rename_with(~str_remove(.,"\\."))%>%
+  rename_at(baker_labels$Rank, ~ baker_labels$CLIENT.IDENTIFIER)%>%
+  select(BA,samplekey$CLIENT.IDENTIFIER)
+
+MCBA_raw<-rbind(BA_import,MCBA_import)%>%
+  mutate(BA=str_replace(BA,"MCA \\(a\\)","aMCA"))%>%
+  mutate(BA=str_replace(BA,"MCA \\(b\\)","bMCA"))%>%
+  mutate(BA=str_replace(BA,"MCA \\(g\\)|gMCA","HCA"))
+
+#Metagenomics Data
+tax_raw<-read_tsv("Data and Metadata/metaphlan_merged_abundance_table_gtdb.tsv", skip=1)%>%
+  rename_with(~str_remove(.,"_kneaddata_metaphlan_bugs_list_gtdb"))%>%
+  select(clade_name,levels(samplekey$CLIENT.IDENTIFIER))%>%
+  mutate_at(2:46,~as.numeric(.))%>%
+  as.data.frame()
+
+genes_raw<-read_tsv("Data and Metadata/merge_humann_genefamilies-cpm-uniref.tsv")%>%
+  rename_with(~str_remove(.,"_kneaddata_Abundance-CPM"))%>%
+  rename("genefamily"='# Gene Family')%>%
+  select(genefamily,levels(samplekey$CLIENT.IDENTIFIER))%>%
+  mutate_at(2:46,~as.numeric(.))%>%
+  as.data.frame()
+
+pathway_raw<-read_tsv("Data and Metadata/merge_humann_pathabundance-cpm.tsv")%>%
+  rename_with(~str_remove(.,"_kneaddata_Abundance-CPM"))%>%
+  rename("pathway"='# Pathway')%>%
+  select(pathway,levels(samplekey$CLIENT.IDENTIFIER))%>%
+  mutate_at(2:46,~as.numeric(.))%>%
+  as.data.frame()
+
+#metadata for metabolites
+bch_dir<-bch_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="ScaledImpData",-BIOCHEMICAL)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  select(BIOCHEMICAL, ScaledImpData,prepost)%>%
+  group_by(prepost,BIOCHEMICAL)%>%
+  summarize(mean=mean(ScaledImpData))%>%
+  spread(key=prepost,value=mean)%>%
+  mutate(dir=factor(ifelse(Pre<Post,"Up after FMT","Down after FMT"),levels=c("Up after FMT","Down after FMT")))%>%
+  select(BIOCHEMICAL,dir)
+
+ba_labels<-read.csv("Data and Metadata/bile acid labels.csv")
+
+aa_labels<-read.csv("Data and Metadata/amino acid labels.csv")
+
+.jgc() 
+bch_metadata<-read.xlsx2("Data and Metadata/NCSU-01-18VW CDT - 20180327.xlsx","ScaledImpData",startRow=13, check.names=T,colIndex=c(1:13))%>%
+  left_join(bch_dir,by="BIOCHEMICAL")%>%
+  left_join(ba_labels,by="BIOCHEMICAL")%>%
+  left_join(aa_labels,by="BIOCHEMICAL")
+
+#metadata for MCBA
+MCBA_dir<-MCBA_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  select(BA, value,prepost)%>%
+  group_by(prepost,BA)%>%
+  summarize(mean=mean(value))%>%
+  spread(key=prepost,value=mean)%>%
+  mutate(dir=factor(ifelse(Pre<Post,"Up after FMT","Down after FMT"),levels=c("Up after FMT","Down after FMT")))%>%
+  select(BA,dir)
+
+MCBA_metadata<-read.csv("Data and Metadata/MCBA_annotation.csv")%>%
+  left_join(.,MCBA_dir,by="BA")%>%
+  mutate(Core=factor(Core, levels=c("CA","CDCA","DCA","LCA","aMCA","bMCA","wMCA","HCA","HDCA","UDCA")))
+
+#metadata for taxonomy
+tax_metadata<-tax_raw%>%
+  select(clade_name)%>%
+  separate(clade_name,into=c("kingdom","phylum","class","order","family","genus","species"),sep="\\;",fill="right")%>%
+  mutate_all(~str_remove(.,".\\_\\_"))
+
+saveRDS(samplekey,"Dataframes/samplekey.rds")
+saveRDS(samplekey_rich,"Dataframes/samplekey_rich.rds")
+saveRDS(bch_raw,"Dataframes/bch_raw.rds")
+saveRDS(bch_metadata,"Dataframes/bch_metadata.rds")
+saveRDS(tax_raw,"Dataframes/tax_raw.rds")
+saveRDS(genes_raw,"Dataframes/genes_raw.rds")
+saveRDS(pathway_raw,"Dataframes/pathway_raw.rds")
+saveRDS(MCBA_raw,"Dataframes/MCBA_raw.rds")
+saveRDS(MCBA_metadata,"Dataframes/MCBA_metadata.rds")
+saveRDS(tax_metadata,"Dataframes/tax_metadata.rds")
+```
+# Linear Modeling 
+Data is already normalized: Median set to 1 for metabolites,Relative abundance for taxonomy, Counts per million for genes
+Linear modelling is great because we have paired longitudinal samples (SUBJ.ID), but we also want to look at pre vs post (multiple post per pre). 
+```{r linmod, message=F,warning=F}
+tax_fam<-tax_raw%>%
+        filter(str_detect(clade_name,"\\;f\\_\\_")&!str_detect(clade_name,"\\;g\\_\\_"))%>%
+        mutate(clade_name=str_extract(clade_name, "\\;f\\_\\_.*"))%>%
+        mutate(clade_name=str_remove(clade_name,"\\;f\\_\\_"))
+
+for (d in c("bch_raw","MCBA_raw","tax_fam","pathway_raw")){
+    Maaslin2(input_data = get(d)%>%
+               dplyr::rename("feature"=1)%>%
+               filter(!str_detect(feature, "\\|"))%>%
+               mutate(feature=make_clean_names(feature))%>%
+               column_to_rownames("feature")%>%
+               mutate_all(~as.numeric(.))%>%
+               t(),
+             input_metadata = samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+             output = paste0("Maaslin output/",d,"_prepost"),
+             fixed_effects = c("prepost"), 
+             random_effects = "SUBJ.ID",
+             reference=c("prepost,Pre"),
+             plot_scatter=F,
+             plot_heatmap = F,
+             normalization="NONE",
+             transform="LOG",
+             analysis_method ="LM",
+             correction="bonferroni",
+             max_significance = 0.05)
+    
+    Maaslin2(input_data = get(d)%>%
+               dplyr::rename("feature"=1)%>%
+               filter(!str_detect(feature, "\\|"))%>%
+               mutate(feature=make_clean_names(feature))%>%
+               column_to_rownames("feature")%>%
+               mutate_all(~as.numeric(.))%>%
+               t(),
+             input_metadata = samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+             output = paste0("Maaslin output/",d,"_TIME.POINT.2"),
+             fixed_effects = c("TIME.POINT.2"), 
+             random_effects = "SUBJ.ID",
+             reference=c("TIME.POINT.2,Pre"),
+             plot_scatter=F,
+             plot_heatmap = F,
+             normalization="NONE",
+             transform="LOG",
+             analysis_method ="LM",
+             correction="bonferroni",
+             max_significance = 0.05)  
+}
+
+```
+
+# Scedasticity
+Check for homoscedasticity. Look for patterns in the cloud.
+```{r scedasticity}
+
+for (d in c("bch_raw","MCBA_raw","tax_fam","pathway_raw")){
+  print(left_join(readRDS(paste0("Maaslin output/",d,"_prepost/fits/residuals.rds"))%>%
+  as.data.frame()%>%
+  rownames_to_column("feature")%>%
+  gather(key="CLIENT.IDENTIFIER",value="residual",-feature),
+  readRDS(paste0("Maaslin output/",d,"_prepost/fits/fitted.rds"))%>%
+  as.data.frame()%>%
+  rownames_to_column("feature")%>%
+  gather(key="CLIENT.IDENTIFIER",value="fitted",-feature), by=c("CLIENT.IDENTIFIER","feature"))%>%
+  ggplot(.,aes(x=fitted,y=residual))+
+  geom_point()+
+  ggtitle(paste0(d,"_prepost")))
+  
+  print(left_join(readRDS(paste0("Maaslin output/",d,"_TIME.POINT.2/fits/residuals.rds"))%>%
+  as.data.frame()%>%
+  rownames_to_column("feature")%>%
+  gather(key="CLIENT.IDENTIFIER",value="residual",-feature),
+  readRDS(paste0("Maaslin output/",d,"_TIME.POINT.2/fits/fitted.rds"))%>%
+  as.data.frame()%>%
+  rownames_to_column("feature")%>%
+  gather(key="CLIENT.IDENTIFIER",value="fitted",-feature), by=c("CLIENT.IDENTIFIER","feature"))%>%
+  ggplot(.,aes(x=fitted,y=residual))+
+  geom_point()+
+  ggtitle(paste0(d,"_TIME.POINT.2")))
+}
+```
+pathways don't look super stellar.. Let's not depend on linear modelling for the pathways.
+
+
+# Organize lists of significant metabolites/families
+Put the pre vs post comparisons with the pre vs each time point comparisons and save them for later reference
+```{r siglists}
+bch_siglist<-rbind(read_tsv("Maaslin output/bch_raw_prepost/all_results.tsv"),
+                   read_tsv("Maaslin output/bch_raw_TIME.POINT.2/all_results.tsv"))%>%
+            left_join(.,bch_raw%>%select(BIOCHEMICAL)%>%mutate(feature=make_clean_names(BIOCHEMICAL)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=unique(.$BIOCHEMICAL)))
+
+MCBA_siglist<-rbind(read_tsv("Maaslin output/MCBA_raw_prepost/all_results.tsv"),
+                   read_tsv("Maaslin output/MCBA_raw_TIME.POINT.2/all_results.tsv"))%>%
+            left_join(.,MCBA_raw%>%select(BA)%>%mutate(feature=make_clean_names(BA)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(BA=factor(BA,levels=unique(.$BA)))
+
+pathway_siglist<-rbind(read_tsv("Maaslin output/pathway_raw_prepost/all_results.tsv"),
+                   read_tsv("Maaslin output/pathway_raw_TIME.POINT.2/all_results.tsv"))%>%
+            left_join(.,pathway_raw%>%select(pathway)%>%mutate(feature=janitor::make_clean_names(pathway)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(pathway=factor(pathway,levels=unique(.$pathway)))
+
+fam_siglist<-rbind(read_tsv("Maaslin output/tax_fam_prepost/all_results.tsv"),
+                   read_tsv("Maaslin output/tax_fam_TIME.POINT.2/all_results.tsv"))%>%
+            left_join(.,tax_fam%>%select(clade_name)%>%mutate(feature=make_clean_names(clade_name)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(clade_name=factor(clade_name,levels=unique(.$clade_name)))
+
+saveRDS(bch_siglist,"Dataframes/Stats/bch_siglist.rds")
+saveRDS(MCBA_siglist,"Dataframes/Stats/MCBA_siglist.rds")
+saveRDS(pathway_siglist,"Dataframes/Stats/pathway_siglist.rds")
+saveRDS(fam_siglist,"Dataframes/Stats/fam_siglist.rds")
+
+```
+
+# Prepare Datasets for correlation
+
+I'm going to do some correlations so lets organize those here
+```{r}
+fam_for_cor<-tax_fam%>%
+  column_to_rownames("clade_name")%>%
+  t()%>%
+  as.data.frame()
+
+bch_for_cor<-bch_raw%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  t()%>%
+  as.data.frame()
+
+MCBA_for_cor<-MCBA_raw%>%
+  column_to_rownames("BA")%>%
+  t()%>%
+  as.data.frame()
+
+identical(rownames(fam_for_cor),rownames(bch_for_cor))
+identical(rownames(fam_for_cor),rownames(MCBA_for_cor))
+
+saveRDS(fam_for_cor,"Dataframes/fam_for_cor.rds")
+saveRDS(bch_for_cor,"Dataframes/bch_for_cor.rds")
+saveRDS(MCBA_for_cor,"Dataframes/MCBA_for_cor.rds")
+```
+

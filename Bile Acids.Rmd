@@ -1,0 +1,208 @@
+---
+title: "Bile Acids Analysis"
+author: "Sam McMillan"
+date: "2023-11-30"
+output: html_document
+---
+
+```{r setup, require=T, include=T}
+library(tidyverse)
+library(randomForest)
+library(janitor)
+library(pheatmap)
+library(psych)
+library(ggpubr)
+
+sessionInfo()
+```
+
+#Get Dataframes
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+bch_raw<-readRDS("Dataframes/bch_raw.rds")
+bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
+bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+tax_raw<-readRDS("Dataframes/tax_raw.rds")
+fam_for_cor<-readRDS("Dataframes/fam_for_cor.rds")
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# Pull out Bile Acids
+```{r}
+BA_raw<-bch_raw%>%
+  filter(BIOCHEMICAL %in% (bch_metadata%>%filter(SUB.PATHWAY %in% c("Secondary Bile Acid Metabolism", "Primary Bile Acid Metabolism")))$BIOCHEMICAL)
+
+```
+
+
+# Random Forest
+```{r}
+BA_long<-BA_raw%>%
+  gather(key="CLIENT.IDENTIFIER",value="ScaledImpData",-BIOCHEMICAL)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+
+#Random Forest
+set.seed(102309)
+BA_forest<-BA_raw%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  t()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(samplekey,., by="CLIENT.IDENTIFIER")%>%
+  select(-CLIENT.IDENTIFIER,-TIME.POINT.2,-SUBJ.ID)%>%
+  clean_names()%>%
+  randomForest(prepost ~ .,data=., proximity=T, importance=TRUE, ntree=1000)
+
+#Prepare to Plot
+BA_forest_plot<-BA_forest$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("biochem")%>%
+  left_join(.,bch_metadata%>%
+              select(BIOCHEMICAL,SUPER.PATHWAY,dir,Degree,Conjugation,Other)%>%
+              mutate(biochem=make_clean_names(BIOCHEMICAL)),by="biochem")%>%
+  filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)%>%
+  filter(MeanDecreaseAccuracy>0)%>%
+  arrange(-MeanDecreaseAccuracy)%>%
+  group_by(dir)%>%
+  mutate(count=1:n())%>%
+  arrange(dir,MeanDecreaseAccuracy)%>%
+  mutate(plotnames=str_remove_all(BIOCHEMICAL,"\\*"))%>%
+  mutate(plotnames=fct_inorder(plotnames))%>%
+  mutate(ID=paste(Degree, Conjugation))%>%
+  mutate(shape=factor(replace_na(Other,"No Modification"),levels=c("No Modification","Sulfated","Glucuronidated")))
+
+#plot
+ggplot(data=BA_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=ID, shape=shape))+
+  geom_point(size=2)+
+  scale_fill_manual(values=anno_color$BA)+
+  scale_shape_manual(values=c(21,22,24))+
+  coord_flip()+
+  theme_bw()+
+  labs(fill="",shape="", y="Mean Decrease Accuracy",x="")+
+  theme(text=element_text(size=8),
+        axis.text.y=element_text(size=6),
+        legend.position="top",
+        legend.text = element_text(size=6),
+        legend.key.size = unit(0.3,'cm'),
+        legend.box="stacked",
+        legend.spacing=unit(-0.15,'cm'),
+        legend.box.margin = ggplot2::margin(0,0,-0.3,-3,unit="cm"))+
+  guides(fill=guide_legend(override.aes=list(shape=21),nrow=2,order=1),
+         shape=guide_legend(override.aes=list(fill=NA),nrow=1,order=2))
+
+ggsave("Figures/Bile Acids/BA_forest.pdf", height=2.75, width=3.5, units="in")
+#height=4.3 for full
+
+##Error Rate
+BA_forest
+
+#output for writing
+BA_forest$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("biochem")%>%
+  left_join(.,bch_metadata%>%
+              select(BIOCHEMICAL,SUPER.PATHWAY,dir,Degree,Conjugation,Other)%>%
+              mutate(biochem=make_clean_names(BIOCHEMICAL)),by="biochem")%>%
+  filter(MeanDecreaseAccuracy>0)%>%
+  group_by(dir)%>%
+  summarize(count=n())
+
+BA_forest_plot%>%
+  group_by(dir)%>%
+  summarize(count=n())
+
+BA_forest_plot%>%
+  group_by(Degree,dir)%>%
+  summarize(count=n())%>%
+  spread(key=dir,value=count)
+
+BA_forest_plot%>%
+  group_by(Conjugation,dir)%>%
+  summarize(count=n())%>%
+  spread(key=dir,value=count)
+
+BA_forest_plot%>%
+  group_by(Other,dir)%>%
+  summarize(count=n())%>%
+  spread(key=dir,value=count)
+
+saveRDS(as.vector(BA_forest_plot$BIOCHEMICAL),"Dataframes/Bile acid order.rds")
+saveRDS(BA_forest$importance,"Dataframes/stats/Untargeted Bile Acid RFA.rds")
+```
+
+# Abundance Heatmap
+```{r}
+BA_by_time_hm<-BA_long%>%
+  select("BIOCHEMICAL","TIME.POINT.2","ScaledImpData")%>%
+  mutate(ScaledImpData=log10(ScaledImpData))%>% # Log transform for plotting
+  group_by(TIME.POINT.2,BIOCHEMICAL)%>%
+  summarize(mean=mean(ScaledImpData))%>% #Mean of timepoints
+  spread(key='TIME.POINT.2',value="mean")%>%
+  left_join(.,bch_metadata,by="BIOCHEMICAL")%>%
+  filter(BIOCHEMICAL %in% BA_forest_plot$BIOCHEMICAL)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL, levels=rev(BA_forest_plot$BIOCHEMICAL)))%>%
+  arrange(BIOCHEMICAL)%>%
+  column_to_rownames("BIOCHEMICAL")
+
+pheatmap(BA_by_time_hm[1:4],
+         cluster_cols=F,
+         cluster_rows=F,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 50,
+         fontsize = 14,
+         filename="Figures/Bile Acids/BA_heatmap_sum.pdf",
+         width=14,
+         height=14
+)
+```
+# Correlate with bacterial families
+```{r}
+cor<-corr.test(bch_for_cor%>%select(as.vector(BA_forest_plot$BIOCHEMICAL)),fam_for_cor,method="spearman",adjust="holm")
+
+BA_fam_cor_plot<-left_join(as.data.frame(cor$p.adj)%>%
+  rownames_to_column("BIOCHEMICAL")%>%
+  gather(key="key",value="p",-BIOCHEMICAL),
+  as.data.frame(cor$r)%>%
+  rownames_to_column("BIOCHEMICAL")%>%
+  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(BA_forest_plot$BIOCHEMICAL)))%>%
+  filter(p<=0.05)%>%
+  select(-p)%>%
+  complete(BIOCHEMICAL,fill=list(key="drop",r=0))%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  select(-drop)
+
+tax_anno<-tax_metadata%>%
+  filter(!is.na(family))%>%
+  select(family,phylum)%>%
+  unique()%>%
+  remove_rownames()%>%
+  filter(family %in% colnames(BA_fam_cor_plot))%>%
+  droplevels()%>%
+  column_to_rownames("family")
+
+pheatmap(BA_fam_cor_plot,
+         annotation_col = tax_anno,
+         cluster_rows=F,
+         cluster_cols=T,
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 20,
+         fontsize = 14,
+         drop_levels = T,
+         filename=paste0("Figures/Bile Acids/BA_vs_fam_spearman.pdf"),
+         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% unique(tax_anno$phylum)]),
+         width=14,
+         height=14)
+
+saveRDS(as.data.frame(cor$p.adj),"Dataframes/Stats/Untargeted bile acids vs families spearman t test holm.rds")
+```
+

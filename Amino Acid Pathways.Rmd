@@ -1,0 +1,419 @@
+---
+title: "Amino Acid Pathways"
+author: "Sam McMillan"
+date: "2023-12-06"
+output: html_document
+---
+# Ima be honest with you this ones a mess. Thats what the supp is for, right?
+```{r setup, require=T}
+library(tidyverse)
+library(janitor)
+library(pheatmap)
+library(rstatix)
+library(ggpubr)
+
+sessionInfo()
+```
+#Get Dataframes
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+pathway_raw<-readRDS("Dataframes/pathway_raw.rds")
+pathway_siglist<-readRDS("Dataframes/Stats/pathway_siglist.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+genes_raw<-readRDS("Dataframes/genes_raw.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# nucleotide Boxplot
+```{r}
+pathway_nuc<-pathway_raw%>%
+  filter(!str_detect(pathway,"\\|"))%>%
+  filter(str_detect(pathway,"Uridine|uridine"))%>%
+  filter(!str_detect(pathway,"regulation"))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-pathway)%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+
+nuc_boxplot_stats<-pathway_nuc%>%
+  ungroup()%>%
+  select(CPM,TIME.POINT.2,SUBJ.ID)%>%
+  complete(TIME.POINT.2, SUBJ.ID, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  pairwise_wilcox_test(CPM ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")
+
+ggplot(pathway_nuc,aes(x=TIME.POINT.2,y=CPM,group=TIME.POINT.2))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=max(pathway_nuc$CPM)/50,dotsize=1,stroke=0.5)+
+  geom_boxplot(alpha=0,linewidth=0.3)+
+  theme_bw()+
+  theme(text=element_text(size=8),
+        legend.position="none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank())+
+  labs(y = "Total UMP_biosynthesis Abundance (CPM)",
+       x= "",
+       fill="Time Post FMT")+
+  scale_y_continuous(limits=c(0,155),expand=c(0,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(nuc_boxplot_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     tip.length=0.01,
+                     step.increase=0.05,
+                     inherit.aes=F)
+
+ggsave("Figures/Supplementals/UMP biosynthesis.pdf")
+
+```
+
+##Amino Acid Boxplot
+```{r}
+AA_boxplot<-pathway_raw%>%
+  filter(pathway %in% pathway_siglist$pathway)%>%
+  filter(str_detect(pathway,"Amino"))%>%
+  separate(pathway,into=c("high","mid","low"),sep=";")%>%
+  separate(mid,into=c("first","second"),sep ="_",extra="merge")%>%
+  mutate(second=str_remove_all(second,"\\_.*|\\."))%>%
+  select(first,second,samplekey$CLIENT.IDENTIFIER)%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-first,-second)%>%
+  group_by(CLIENT.IDENTIFIER,first,second)%>%
+  summarize(CPM=sum(CPM))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(first=fct_inorder(first), second=fct_inorder(second), type=fct_inorder(paste(first,second)))
+
+AA_boxplot_stats<-AA_boxplot%>%
+  ungroup()%>%
+  select(CPM,TIME.POINT.2,SUBJ.ID,type)%>%
+  complete(TIME.POINT.2, SUBJ.ID ,type, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  group_by(type)%>%
+  pairwise_wilcox_test(CPM ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")%>%
+  separate(type,into=c("first","second"),sep=" ", remove=F)%>%
+  mutate(y.position=log10(y.position)*1.1)
+
+ggplot(data=AA_boxplot,
+       aes(x=TIME.POINT.2,y=CPM,fill=TIME.POINT.2))+
+  geom_point(shape=21,position=position_dodge(width=0.75),size=2,stroke=0.1)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  facet_grid(first~second)+
+  theme_bw()+
+  theme(text=element_text(size=10),
+        legend.position="none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_line(linewidth=0.2),
+        panel.grid.minor= element_blank(),
+        strip.background=element_blank())+
+  labs(y = "CPM",
+       x= "",
+       fill="Time Post FMT")+
+    scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks=c(0,1e2,1e4,1e6,1e8,1e10),
+                     expand=c(0.03,0,0.07,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(AA_boxplot_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     size=2,
+                     tip.length=0.01,
+                     step.increase=0.07,
+                     step.group.by="type",
+                     inherit.aes=F)
+
+ggsave("Figures/Supplementals/AA_boxplots.pdf",height=11,width=8.5,units="in")
+
+```
+
+
+##Pathway Heatmaps
+```{r}
+pathway_aa<-pathway_raw%>%
+  filter(!str_detect(pathway,"\\|"))%>%
+  filter(str_detect(substr(pathway,0,10),"Amino-acid"))%>%
+  separate(pathway,into=c("type","amino","note"),sep=";",extra="merge")%>%
+  separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
+  filter(!str_detect(bolism,"regulation"))%>%
+  select(amino,type,samplekey$CLIENT.IDENTIFIER)%>%
+  mutate(amino=str_replace(amino,"\\.",""))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-amino,-type)%>%
+  group_by(amino,type,CLIENT.IDENTIFIER)%>%
+  summarize(CPM=log10(sum(CPM)+1))%>%
+  spread(key="CLIENT.IDENTIFIER",value="CPM")%>%
+  select(amino,samplekey$CLIENT.IDENTIFIER)
+
+pheatmap(pathway_aa%>%
+           filter(type=="Amino-acid_biosynthesis")%>%
+           column_to_rownames("amino")%>%
+           select(-type),
+         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
+         annotation_colors = anno_color,
+         cluster_cols=F,
+         cluster_rows=T,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         filename="Figures/Supplementals/amino acid biosynthesis.pdf",
+         border_color="grey20",
+         width=10,
+         height=6)
+
+pheatmap(pathway_aa%>%
+           filter(type=="Amino-acid_degradation")%>%
+           column_to_rownames("amino")%>%
+           select(-type),
+         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
+         annotation_colors = anno_color,
+         cluster_cols=F,
+         cluster_rows=T,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         filename="Figures/Supplementals/amino acid degredation.pdf",
+         border_color="grey20",
+         width=10,
+         height=6)
+```
+
+# family Plots
+```{r}
+pathway_aa_spec<-pathway_raw%>%
+  filter(str_detect(pathway,"Amino-acid"))%>%
+  filter(str_detect(pathway,"\\|"))%>%
+  separate(pathway,into=c("type","amino","note", "species"),sep=";|\\.|\\|",extra="merge")%>%
+  separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
+  mutate(species=str_remove(species,"\\|"))%>%
+  separate(species,into=c("genus","species"),sep=".s__")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(phylum,family,genus)%>%unique(),by="genus")%>%
+  select(amino,bolism,"phylum","family","species",everything())%>%
+  mutate(phylum=case_when(!is.na(phylum)~phylum, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Firmicutes_unclassified","Clostridiales_unclassified")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota",
+                          genus %in% c("Serratia","Vibrio")~"Proteobacteria"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae",
+                          genus=="Serratia"~"Yersiniaceae",
+                          genus=="Vibrio"~"Vibrionaceae"))%>%
+  select(amino,type,family,samplekey$CLIENT.IDENTIFIER)%>%
+  mutate(amino=str_replace(amino,"\\.",""))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-amino,-family,-type)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=unique(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=if_else(is.na(family),"Other",family))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()
+
+ggplot(pathway_aa_spec%>%
+         filter(type=="Amino-acid_degradation"),
+       aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_wrap(~amino,ncol=5,scales="free_y")+
+  theme(axis.text.x=element_text(angle=-90),
+        text=element_text(size=12),
+        legend.position="none",
+        strip.text=element_text(size=8),
+        strip.background=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        axis.text.x.bottom = element_blank())+
+  scale_fill_manual(values = anno_color$familyplot)+
+  labs(x="",y="Complete Pathway Abundance (CPM)",fill="Family")+
+  ggtitle("Degradation")
+
+ggsave("Figures/Supplementals/amino acid degradation_familyplot.pdf",height=3,width=8.25,units="in")
+
+ggplot(pathway_aa_spec%>%
+         filter(type=="Amino-acid_biosynthesis")%>%
+         complete(family,fill=list(amino="D-alanine",type="Amino-acid_biosynthesis",CLIENT.IDENTIFIER="R1_1",CPM=0))
+       ,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_wrap(~amino,ncol=5,scales="free_y")+
+  theme(axis.text.x=element_text(angle=-90),
+        text=element_text(size=12),
+        legend.position="bottom",
+        strip.text=element_text(size=8),
+        strip.background = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        axis.text.x.bottom = element_blank())+
+  scale_fill_manual(values = anno_color$familyplot)+
+  labs(x="",y="Complete Pathway Abundance (CPM)",fill="Family")+
+  ggtitle("Biosynthesis")
+
+ggsave("Figures/Supplementals/amino acid biosynthesis_familyplot.pdf",height=6,width=8.5,units="in")
+```
+# Species plots
+```{r}
+pathway_aa_spec<-pathway_raw%>%
+  filter(str_detect(pathway,"Amino-acid"))%>%
+  filter(str_detect(pathway,"\\|"))%>%
+  separate(pathway,into=c("pathway","species"),sep="\\|")%>%
+  separate(pathway,into=c("type","amino","note"),sep=";|\\.",extra="merge",remove=F)%>%
+  separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
+  #filter(amino %in% c("L-cysteine","L-isoleucine","L-leucine","L-proline","L-tryptophan","L-valine") & pathway %in% pathway_siglist$pathway)%>%
+  mutate(species=str_remove(species,"\\|"))%>%
+  separate(species,into=c("genus","species"),sep=".s__")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(phylum,family,genus)%>%unique(),by="genus")%>%
+  select(amino,bolism,"phylum","family","species",everything())%>%
+  mutate(phylum=case_when(!is.na(phylum)~phylum, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Firmicutes_unclassified","Clostridiales_unclassified")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota",
+                          genus %in% c("Serratia","Vibrio")~"Proteobacteria"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae",
+                          genus=="Serratia"~"Yersiniaceae",
+                          genus=="Vibrio"~"Vibrionaceae"))%>%
+  select(amino,type,family,species,samplekey$CLIENT.IDENTIFIER)%>%
+  mutate(amino=str_replace(amino,"\\.",""))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-amino,-family,-type,-species)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=unique(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=if_else(is.na(family),"Other",family))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()
+
+ggplot(pathway_aa_spec,
+       aes(x=CLIENT.IDENTIFIER,y=CPM, fill=species))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_grid(type~amino,scales="free_y")+
+  theme(axis.text.x=element_text(angle=-90),
+        text=element_text(size=12),
+        legend.text=element_text(size=6),
+        legend.position="right",
+        strip.text=element_text(size=8),
+        strip.background=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        axis.text.x.bottom = element_blank())+
+  #scale_fill_manual(values = anno_color$familyplot)+
+  labs(x="",y="Complete Pathway Abundance (CPM)",fill="Family")+
+  scale_y_log10()
+
+ggsave("Figures/Supplementals/amino acid pathways_familyplot_2.pdf",height=6,width=20,units="in")
+```
+
+# Stickland Genes
+```{r}
+stickland<-c("proline reductase","Glycine reduc","Glycine/sarcosine/betaine reductase",
+             "2-hydroxyisocapro", "2-ketoisovalerate", "indole-3-pyruvate reductase","Branched chain amino acid aminotransferase","cysteine desulfhydrase")
+other<-c("Sigma-54-dependent transcriptional activator", "Electron transfer flavoprotein","thioredoxin","phosphate acyltransferase", "Acyl-CoA dehydrogenase")
+
+stickland_genes<-genes_raw%>%
+  filter(!str_detect(genefamily,"\\|"))%>%
+  filter(str_detect(genefamily,regex(paste(stickland,collapse="|"),ignore_case=T)))
+```
+
+```{r}
+stickland_by_time<-stickland_genes%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-genefamily)%>%
+  mutate(aa=case_when(str_detect(genefamily,regex("Glycine",ignore_case=T))~"Glycine Reductase",
+                      str_detect(genefamily,regex("Proline",ignore_case=T))~"Proline Reductase",
+                      str_detect(genefamily,regex("2-ketoisovalerate",ignore_case=T))~"Valine Reductase",
+                      str_detect(genefamily,regex("indole-3-pyruvate reductase",ignore_case=T))~"Tryptophan Reductase",
+                      str_detect(genefamily,regex("cysteine desulfhydrase",ignore_case=T))~"Cysteine desulfhydrase",
+                      str_detect(genefamily,regex("Branched chain amino acid aminotransferase",ignore_case=T))~"Branched chain amino acid aminotransferase",
+                      str_detect(genefamily,regex("2-hydroxyisocapro",ignore_case=T))~"Leucine Reductase"))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  select(CLIENT.IDENTIFIER,CPM,TIME.POINT.2,SUBJ.ID,aa)%>%
+  group_by(CLIENT.IDENTIFIER,TIME.POINT.2,SUBJ.ID,aa)%>%
+  summarize(sum=sum(CPM))
+
+stickland_stats<-stickland_by_time%>%
+  ungroup()%>%
+  select(sum,TIME.POINT.2,SUBJ.ID, aa)%>%
+  complete(TIME.POINT.2, SUBJ.ID,aa, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  group_by(aa)%>%
+  pairwise_wilcox_test(sum ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2")%>%
+  mutate(y.position=y.position-60)
+
+ggplot(stickland_by_time,aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=475/50,dotsize=1,stroke=0.5)+
+  geom_boxplot(alpha=0,linewidth=0.3)+
+  theme_bw()+
+  facet_wrap(~aa,ncol=3)+
+  theme(text=element_text(size=8),
+        legend.position="none",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank())+
+  labs(y = "Total Stickland Gene Abundance (CPM)",
+       x= "",
+       fill="Time Post FMT")+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  stat_pvalue_manual(filter(stickland_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     tip.length=0.01,
+                     step.increase=0.05,
+                     step.group.by="aa",
+                     inherit.aes=F)
+
+ggsave("Figures/Supplementals/stickland genes boxplot.pdf",height=4,width=6, units="in")
+
+saveRDS(stickland_stats,"Dataframes/Stats/stickland wilcox sr holm.rds")
+```
+
+# Stickland species plot
+```{r}
+genes_stickland_spec<-genes_raw%>%
+  filter(str_detect(genefamily,paste0(unique(stickland_genes$genefamily),collapse="|")))%>%
+  filter(str_detect(genefamily,"\\|"))%>%
+  separate(genefamily,into=c("genefamily","species"),sep="\\|",extra="merge")%>%
+  mutate(aa=case_when(str_detect(genefamily,regex("Glycine",ignore_case=T))~"Glycine Reductase",
+                      str_detect(genefamily,regex("Proline",ignore_case=T))~"Proline Reductase",
+                      str_detect(genefamily,regex("2-ketoisovalerate",ignore_case=T))~"Valine Reductase",
+                      str_detect(genefamily,regex("indole-3-pyruvate reductase",ignore_case=T))~"Tryptophan Reductase",
+                      str_detect(genefamily,regex("cysteine desulfhydrase",ignore_case=T))~"Cysteine desulfhydrase",
+                      str_detect(genefamily,regex("Branched chain amino acid aminotransferase",ignore_case=T))~"Branched chain amino acid aminotransferase",
+                      str_detect(genefamily,regex("2-hydroxyisocapro",ignore_case=T))~"Leucine Reductase"))%>%
+  mutate(species=str_remove(species,"\\|"))%>%
+  separate(species,into=c("genus","species"),sep=".s__")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(phylum,family,genus)%>%unique(),by="genus")%>%
+  select(aa,"phylum","family","species",everything())%>%
+  mutate(phylum=case_when(!is.na(phylum)~phylum, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Firmicutes_unclassified","Clostridiales_unclassified")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota",
+                          genus %in% c("Serratia","Vibrio")~"Proteobacteria"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae",
+                          genus=="Serratia"~"Yersiniaceae",
+                          genus=="Vibrio"~"Vibrionaceae"))%>%
+  select(aa,family,samplekey$CLIENT.IDENTIFIER)%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-aa,-family)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=unique(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=if_else(is.na(family),"Other",family))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()
+
+ggplot(genes_stickland_spec,
+       aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_wrap(~aa,ncol=3,scales="free_y")+
+  theme(axis.text.x=element_text(angle=-90),
+        text=element_text(size=6),
+        legend.position="bottom",
+        strip.text=element_text(size=6),
+        strip.background=element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        axis.text.x.bottom = element_blank())+
+  scale_fill_manual(values = anno_color$familyplot)+
+  labs(x="",y="Gene Abundance (CPM)",fill="Family")
+
+ggsave("Figures/Supplementals/Stickland_familyplot.pdf",height=6,width=6,units="in")
+```
+

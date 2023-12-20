@@ -1,0 +1,197 @@
+---
+title: "Carnitine Metabolism Analysis"
+author: "Sam McMillan"
+date: "2023-11-30"
+output: html_document
+---
+
+```{r setup, require=T, include=T}
+library(tidyverse)
+library(ggpubr)
+library(pheatmap)
+library(psych)
+library(rstatix)
+
+sessionInfo()
+```
+
+#Get Dataframes
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")
+pathway_raw<-readRDS("Dataframes/pathway_raw.rds")
+bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
+top_bch_forest<-readRDS("Dataframes/top_bch_forest.rds")
+
+source("Scripts/Color codes.R")
+```
+
+# Pull Out Carnitine Metabolism
+isolate carnitine metabolism to see whats going on with those high carnitines in the metabolites dataset
+```{r}
+carn<-pathway_raw%>%
+  filter(str_detect(pathway,"carnitine|Carnitine"))%>%
+  separate(pathway,into=c("UniRef","taxa"),sep = "\\|",fill="right")%>%
+  filter(!is.na(taxa))%>%
+  separate(taxa,into=c("genus","species"),sep = "\\.",fill="right")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(family,phylum,genus)%>%unique(),by="genus")%>%
+  select("UniRef","phylum","genus","species",everything())
+
+carn_long<-carn%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-c("UniRef","phylum","family","genus","species"))%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+
+saveRDS(carn,"Dataframes/carnitine metabolism.rds")
+```
+
+# Boxplot
+plot all the carnitine metabolism for each timepoint and see if it signficantly changes
+```{r}
+carn_by_time<-carn_long%>%
+  select(CLIENT.IDENTIFIER,CPM,TIME.POINT.2,SUBJ.ID)%>%
+  group_by(CLIENT.IDENTIFIER,TIME.POINT.2,SUBJ.ID)%>%
+  summarize(sum=sum(CPM))
+
+carn_boxplot_stats<-carn_by_time%>%
+  ungroup()%>%
+  select(sum,TIME.POINT.2,SUBJ.ID)%>%
+  complete(TIME.POINT.2, SUBJ.ID, fill=list(sum=NA))%>%
+  arrange(SUBJ.ID)%>%
+  pairwise_wilcox_test(sum ~ TIME.POINT.2,
+                       p.adjust.method="holm",
+                       ref.group = "Pre",
+                       paired=T)%>%
+  add_xy_position(x="TIME.POINT.2",step.increase = 0.08)
+
+ggplot(carn_by_time, aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=100/50,dotsize=1.3,stroke=0.5)+
+  geom_boxplot(alpha=0,linewidth=0.2)+
+  theme_bw()+
+  theme(text=element_text(size=8),
+        legend.position="top",
+        legend.text = element_text(size=7),
+        legend.key.size = unit(0.1 ,'in'),
+        legend.box.margin = unit(c(0,.5,0,0),"in"),
+        axis.title.y = element_text(size=6),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank())+
+  labs(y = "Carnitine Metabolism Pathway Abundance (CPM)",
+       x= "",
+       fill="")+
+  guides(fill=guide_legend(nrow=1))+
+  scale_y_continuous(limits=c(0,100),expand=c(0,0))+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
+ stat_pvalue_manual(filter(carn_boxplot_stats,p.adj<0.05), 
+                     label = "p.adj.signif",
+                     tip.length=0.01,
+                     step.increase=0,
+                     inherit.aes=F)
+
+ggsave("Figures/Carnitine/carn_boxplot.pdf",height=2.5,width=3, units="in")
+
+saveRDS(carn_boxplot_stats,"Dataframes/Stats/Carnitine metabolism_wilcox_signed_rank_holm.rds")
+```
+
+#Species Barplot
+Check which species are encoding carnitine metabolic pathways
+```{r}
+carn_spec_plot<-carn_long%>%
+  mutate(species=str_remove(species,"s__"))%>%
+  mutate(species=str_replace_na(species,"Other"))%>%
+  mutate(species=str_replace_all(species,"_"," "))%>%
+  arrange(-CPM)%>%
+  mutate(species=fct_inorder(species))%>%
+  mutate(species=fct_relevel(species,"Other",after=Inf))%>%
+  droplevels()
+
+ggplot(carn_spec_plot,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=species))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  theme(axis.text.x=element_blank(),
+        text=element_text(size=8),
+        legend.text = element_text(size=7),
+        legend.key.size = unit(0.1 ,'in'),
+        axis.title.y = element_text(size=6),
+        legend.box.margin = unit(c(0,0,0,-0.15),"in"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank())+
+  scale_fill_manual(values = anno_color$speciesplot)+
+  scale_y_continuous(limits=c(0,70),expand=c(0,0))+
+  labs(x="",y="Carnitine Metabolism Pathway Abundance (CPM)",fill="Species")
+ggsave("Figures/Carnitine/carn_family_plot.pdf",height=2,width=3.5, units="in")
+```
+its all enterobacteriaceae, neat
+
+#Carnitine Metabolism Correlation
+are some bacterial species present alongside certain species of carnitines?
+```{r}
+carn_for_cor<-carn%>%
+  mutate(species=str_remove(species,"s__"))%>%
+  mutate(species=str_replace_na(species,"Unclassified"))%>%
+  mutate(species=str_replace_all(species,"_"," "))%>%
+  select(species,levels(samplekey$CLIENT.IDENTIFIER))%>%
+  column_to_rownames("species")%>%
+  t()
+
+sig_carn<-bch_metadata%>%
+  filter(SUB.PATHWAY=="Fatty Acid Metabolism(Acyl Carnitine)"| str_detect(BIOCHEMICAL,"carnitine|Carnitine"))%>%
+  filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)
+
+#Make sure I'm correlating the right things
+identical(rownames(carn_for_cor),rownames(bch_for_cor))
+
+carn_cor<-corr.test(bch_for_cor%>%select(as.vector(sig_carn$BIOCHEMICAL)),carn_for_cor,method="spearman",adjust="holm")
+
+carn_spec_cor_plot<-left_join(as.data.frame(carn_cor$p.adj)%>%
+  rownames_to_column("BIOCHEMICAL")%>%
+  gather(key="key",value="p",-BIOCHEMICAL),
+  as.data.frame(carn_cor$r)%>%
+  rownames_to_column("BIOCHEMICAL")%>%
+  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=as.vector(sig_carn$BIOCHEMICAL)))%>%
+  filter(p<=0.05)%>%
+  select(-p)%>%
+  complete(BIOCHEMICAL,fill=list(key="drop",r=0))%>%
+  spread(key=key,value=r,fill=0)%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  select(-drop)
+
+source("Scripts/pheatmap_left.R")
+
+pheatmap(carn_spec_cor_plot,
+         cluster_rows=F,
+         cluster_cols=F,
+         fontsize=16,
+         annotation_colors=anno_color,
+         color=c(colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         angle_col=270,
+         width=5.4,
+         height=5,
+         filename=paste0("Figures/Carnitine/bch_vs_carn_spearman.pdf"))
+
+##Reset the pheatmap left overwrite
+detach("package:pheatmap", unload = TRUE)
+library(pheatmap)
+
+saveRDS(as.data.frame(carn_cor$p.adj),"Dataframes/stats/Carn metabolism vs Carn correlation t test holm.rds")
+```
+
+
+# For Writing
+I mention some stuff in the text, these are the summaries
+```{r}
+# for writing
+#total acylcarnitines in metabolomics
+nrow(bch_metadata%>%filter(str_detect(BIOCHEMICAL,"carnitine")))-2 #subtract out "carnitine" and "deoxycarnitine" I confirmed succinyl and malonyl are acyl carnitines.
+# how many were significant
+nrow(bch_siglist%>%select(BIOCHEMICAL)%>%unique()%>%filter(str_detect(BIOCHEMICAL,"carnitine")))
+#how many significant are in random forest
+nrow(bch_siglist%>%select(BIOCHEMICAL)%>%unique()%>%filter(str_detect(BIOCHEMICAL,"carnitine") & BIOCHEMICAL %in% top_bch_forest))
+
+
+```
+
