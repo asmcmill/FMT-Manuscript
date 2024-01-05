@@ -11,6 +11,7 @@ library(pheatmap)
 library(randomForest)
 library(psych)
 library(ggtext)
+library(janitor)
 
 sessionInfo()
 ```
@@ -51,14 +52,19 @@ AA_raw<-bch_raw%>%
                           "indoleacetate", # oxidative Tryptophan
                           "phenylacetate", # oxidative phenylalanine
                           "4-imidazoleacetate", #oxidative histidine
-                          "3-phenylpropionate (hydrocinnamate)")) # reductive phenylalanine
+                          "3-phenylpropionate (hydrocinnamate)"))##reductive phenylalanine
 
+AA_raw_sig<-bch_raw%>%
+  left_join(.,bch_metadata,by="BIOCHEMICAL")%>%
+  filter(SUPER.PATHWAY %in% c("Amino Acid","Peptide"))%>%
+  filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)
 ```
 
 
 # Random Forest
 ```{r}
 AA_long<-AA_raw%>%
+  select(BIOCHEMICAL,samplekey$CLIENT.IDENTIFIER)%>%
   gather(key="CLIENT.IDENTIFIER",value="ScaledImpData",-BIOCHEMICAL)%>%
   mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
   left_join(.,samplekey,by="CLIENT.IDENTIFIER")
@@ -107,7 +113,7 @@ ggplot(data=AA_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=AA_grou
         plot.margin = unit(c(0,0.25,0,0),"in"))+
   guides(fill=guide_legend(nrow=1))
 
-ggsave("Figures/Amino Acids/Amino Acid_forest.pdf", height=3.3, width=3.5, units="in")
+ggsave("Figures/Amino Acids/Amino Acid_forest_sig_all.pdf", height=3.3, width=3.5, units="in")
 
 ##Error Rate
 AA_forest
@@ -152,36 +158,94 @@ pheatmap(AA_by_time_hm[1:4],
          height=14
 )
 
-bch_all_hmap<-bch_raw%>%
-  mutate_if(is.numeric,~log(.))%>%
-  left_join(.,bch_metadata%>%select(BIOCHEMICAL,SUPER.PATHWAY,dir),by="BIOCHEMICAL")%>%
-  filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)%>%
-  ungroup()%>%
-  mutate(pre=rowMeans(.[2:17]))%>%
-  mutate(dir=fct_rev(dir))%>%
-  arrange(dir,SUPER.PATHWAY,-pre)%>%
-  column_to_rownames("BIOCHEMICAL")
-
-pheatmap(bch_all_hmap[1:45],
-         cluster_cols=F,
-         cluster_rows=F,
-         annotation_row=bch_all_hmap%>%select("SUPER.PATHWAY"),
-         annotation_col=samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2)%>%column_to_rownames("CLIENT.IDENTIFIER"),
-         annotation_colors = anno_color,
-         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
-         border_color="grey20",
-         #cellheight = 6.1,
-         #cellwidth = 25,
-         show_colnames = F,
-         annotation_names_col = F,
-         annotation_names_row = F,
-         fontsize = 10,
-         filename="Figures/Metabolites/heatmap_all_signif.pdf",
-         width=16,
-         height=21
-)
-
 ```
+# family Plots
+```{r}
+pathway_aa_spec<-pathway_raw%>%
+  filter(str_detect(pathway,"Amino-acid") & str_detect(pathway,"\\|"))%>%
+  separate(pathway, into=c("pathway","species"),sep="\\|",fill="right")%>%
+  #filter(pathway %in% pathway_siglist$pathway)%>%
+  separate(pathway,into=c("type","amino","note"),sep=";|\\.",extra="merge")%>%
+  separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
+  mutate(species=str_remove(species,"\\|"))%>%
+  separate(species,into=c("genus","species"),sep=".s__",fill="right")%>%
+  mutate(genus=str_remove(genus,"g\\_\\_"))%>%
+  left_join(.,tax_metadata%>%select(phylum,family,genus)%>%unique(),by="genus")%>%
+  select(amino,bolism,"phylum","family","species",everything())%>%
+  mutate(phylum=case_when(!is.na(phylum)~phylum, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium","Subdoligranulum","Ruminococcus","Firmicutes_unclassified","Clostridiales_unclassified")~"Firmicutes", 
+                          genus=="Methanobrevibacter" ~ "Euryarchaeota",
+                          genus %in% c("Serratia","Vibrio")~"Proteobacteria"))%>%
+  mutate(family=case_when(!is.na(family)~family, 
+                          genus %in% c("Tyzzerella","Lachnospiraceae_unclassified","Coprococcus","Lachnoclostridium")~"Lachnospiraceae",
+                          genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
+                          genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae",
+                          genus=="Serratia"~"Yersiniaceae",
+                          genus=="Vibrio"~"Vibrionaceae"))%>%
+  select(amino,type,family,samplekey$CLIENT.IDENTIFIER)%>%
+  mutate(amino=str_replace(amino,"\\.",""))%>%
+  gather(key="CLIENT.IDENTIFIER",value="CPM",-amino,-family,-type)%>%
+  group_by(family)%>% #This is to clean up legend
+  mutate(max=max(CPM))%>%
+  group_by(amino)%>%
+  mutate(test=max/max(CPM))%>%
+  mutate(family=if_else(family %in% (filter(.,test>0.1))$family,family,"Other"))%>% #has to be at least 10% max to get color
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=unique(samplekey$CLIENT.IDENTIFIER)))%>%
+  mutate(family=if_else(is.na(family),"Other",family))%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  droplevels()
+
+amino_names<-c(#non polar
+               "glycine"="Glycine",
+               "D-alanine"="D-alanine",
+               "L-isoleucine"="Isoleucine",
+               "L-leucine"="Leucine",
+               "L-methionine"="Methionine",
+               #aromatic
+               "L-phenylalanine"="Phenylalanine",
+               "L-tryptophan"="Tryptophan",
+               "L-tyrosine"="Tyrosine",
+               #Polar
+               "L-asparagine"="Asparagine",
+               "L-cysteine"="Cysteine",
+               "L-proline"="Proline",
+               "L-serine"="Serine",
+               "L-threonine"="Threonine",
+               #neg charge
+               "L-glutamate"="Glutamate",
+               #pos charge
+               "L-arginine"="Arginine",
+               "L-histidine"="Histidine",
+               "L-lysine"="Lysine",
+               #Other
+               "L-homocysteine"="Homocysteine",
+               "S-adenosyl-L-methionine"="S-adenosyl-L-methionine"
+               )
+
+ggplot(pathway_aa_spec%>%
+         mutate(amino=factor(amino,levels=names(amino_names)))%>%
+         filter(type=="Amino-acid_biosynthesis")
+       ,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  facet_wrap(~amino,ncol=5,scales="free_y",labeller = as_labeller(amino_names))+
+  theme(axis.text.x=element_text(angle=-90),
+        text=element_text(size=8),
+        legend.position="right",
+        strip.text=element_text(size=8),
+        strip.background = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x= element_blank(),
+        axis.text.x.bottom = element_blank(),
+        legend.box.margin=unit(c(0,0,0,0),"in"),
+        legend.text=element_text(size=8))+
+  scale_fill_manual(values = anno_color$familyplot)+
+  guides(fill=guide_legend(ncol=1))+
+  labs(x="",y="Pathway Abundance (CPM)",fill="")
+
+ggsave("Figures/Amino Acids/amino acid biosynthesis_familyplot.pdf",height=5,width=8.5,units="in")
+```
+
 # Correlate with bacterial families
 ```{r}
 AA_cor<-corr.test(bch_for_cor%>%select(all_of(top_AA_forest)),fam_for_cor,method="spearman",adjust="holm")
@@ -202,30 +266,127 @@ AA_fam_cor_plot<-left_join(as.data.frame(AA_cor$p.adj)%>%
 
 tax_anno<-tax_metadata%>%
   filter(!is.na(family))%>%
-  select(family,phylum)%>%
+  select(family)%>%
   unique()%>%
   remove_rownames()%>%
   filter(family %in% colnames(AA_fam_cor_plot))%>%
-  droplevels()%>%
+  mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
   column_to_rownames("family")
 
 pheatmap(AA_fam_cor_plot,
          annotation_col = tax_anno,
          cluster_rows=F,
          cluster_cols=T,
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         breaks=seq(-1,1,2/60),
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
          border_color="grey20",
          cellheight = 12,
          cellwidth = 20,
          fontsize = 14,
          drop_levels = T,
          filename=paste0("Figures/Amino Acids/AA_vs_fam_spearman.pdf"),
-         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% unique(tax_anno$phylum)]),
+         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(c(tax_anno$familyplot,pathway_aa_spec$family))]),
          width=14,
          height=14)
 
 saveRDS(as.data.frame(AA_cor$p.adj),"Dataframes/Stats/AA vs Family correlation t test holm.rds")
 ```
 
+# Random Forest all significant amino acids
+```{r}
+AA_long_sig<-AA_raw_sig%>%
+  select(BIOCHEMICAL,samplekey$CLIENT.IDENTIFIER)%>%
+  gather(key="CLIENT.IDENTIFIER",value="ScaledImpData",-BIOCHEMICAL)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+
+#Random Forest
+set.seed(102309)
+AA_forest_sig<-AA_raw_sig%>%
+  column_to_rownames("BIOCHEMICAL")%>%
+  t()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(samplekey,., by="CLIENT.IDENTIFIER")%>%
+  select(-CLIENT.IDENTIFIER,-TIME.POINT.2,-SUBJ.ID)%>%
+  clean_names()%>%
+  randomForest(prepost ~ .,data=., proximity=T, importance=TRUE, ntree=1000)
+
+#Prepare to Plot
+AA_forest_plot_sig<-AA_forest_sig$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("biochem")%>%
+  left_join(.,bch_metadata%>%
+              select(BIOCHEMICAL,AA_group,dir,SUB.PATHWAY)%>%
+              mutate(biochem=janitor::make_clean_names(BIOCHEMICAL)),by="biochem")%>%
+  filter(MeanDecreaseAccuracy>0)%>%
+  arrange(-MeanDecreaseAccuracy)%>%
+  arrange(dir,MeanDecreaseAccuracy)%>%
+  mutate(plotnames=str_remove(BIOCHEMICAL,"\\*"))%>%
+  mutate(plotnames=if_else(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL,paste("*", plotnames),plotnames))%>%
+  mutate(plotnames=fct_inorder(plotnames))%>%
+  mutate(BIOCHEMICAL=fct_inorder(BIOCHEMICAL))
+
+#plot
+ggplot(data=AA_forest_plot_sig, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=SUB.PATHWAY))+
+  geom_point(shape=21, size=2)+
+  #scale_fill_manual(values=anno_color$AA_group)+
+  coord_flip()+
+  theme_bw()+
+  labs(fill="", y="Mean Decrease Accuracy",x="")+
+  theme(axis.text.y=element_text(size=6),
+        axis.text.x=element_text(size=6),
+        axis.title.y=element_text(size=8),
+        legend.position="top",
+        legend.text = element_markdown(size=6),
+        legend.key.size = unit(c(0.1,0),"in"),
+        legend.box.margin=unit(c(0,1.5,-0.14,0),"in"),
+        plot.margin = unit(c(0,0.25,0,0),"in"))+
+  guides(fill=guide_legend(ncol=3))
+#3.3
+ggsave("Figures/Supplementals/Amino Acid_forest_sig_all.pdf", height=5, width=3.5, units="in")
+
+##Error Rate
+AA_forest_sig
+
+##Check for not significant, print here and mark in illustrator
+AA_forest_plot_sig$BIOCHEMICAL[!AA_forest_plot$BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL]
+
+#make list for filtering
+top_AA_forest_sig<-as.vector(AA_forest_plot$BIOCHEMICAL)
+
+## for writing
+AA_forest_plot_sig%>%group_by(dir)%>%summarize(count=n())
+
+```
+
+# Abundance Heatmap for significant
+```{r}
+AA_by_time_hm_sig<-AA_long_sig%>%
+  select("BIOCHEMICAL","TIME.POINT.2","ScaledImpData")%>%
+  mutate(ScaledImpData=log10(ScaledImpData))%>% # Log transform for plotting
+  group_by(TIME.POINT.2,BIOCHEMICAL)%>%
+  summarize(mean=mean(ScaledImpData))%>% #Mean of timepoints
+  spread(key='TIME.POINT.2',value="mean")%>%
+  left_join(.,bch_metadata,by="BIOCHEMICAL")%>%
+  filter(BIOCHEMICAL %in% top_AA_forest)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL, levels=rev(top_AA_forest)))%>%
+  arrange(BIOCHEMICAL)%>%
+  column_to_rownames("BIOCHEMICAL")
+
+pheatmap(AA_by_time_hm_sig[1:4],
+         cluster_cols=F,
+         cluster_rows=F,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 50,
+         fontsize = 14,
+         filename="Figures/Supplementals/Amino_acids_heatmap_by_time_sig_all.pdf",
+         width=14,
+         height=14
+)
+
+```
 
 

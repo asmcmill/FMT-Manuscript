@@ -218,25 +218,26 @@ MCBA_fam_cor_plot<-left_join(as.data.frame(cor_MCBA_fam$p.adj)%>%
 
 tax_anno<-tax_metadata%>%
   filter(!is.na(family))%>%
-  select(family,phylum)%>%
+  select(family)%>%
   unique()%>%
   remove_rownames()%>%
-  filter(phylum %in% names(anno_color$phylumplot))%>%
+  filter(family %in% colnames(MCBA_fam_cor_plot))%>%
+  mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
   column_to_rownames("family")
 
 pheatmap(MCBA_fam_cor_plot,
          annotation_col = tax_anno,
          cluster_rows=F,
          cluster_cols=T,
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
-         breaks=seq(from=-1,to=1,by=2/60),
+breaks=seq(-1,1,2/60),
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
          border_color="grey20",
          cellheight = 12,
          cellwidth = 20,
          fontsize = 14,
          drop_levels = T,
          filename="Figures/MCBA/MCBA_vs_fam_spearman.pdf",
-         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% tax_anno[colnames(MCBA_fam_cor_plot),"phylum"]]),
+         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(tax_anno$familyplot)]),
          width=14,
          height=17)
 
@@ -244,7 +245,7 @@ saveRDS(cor_MCBA_fam$p.adj,"Dataframes/Stats/MCBA vs family spearman t test holm
 
 ```
 
-# Boxplot by time
+# Boxplot by time (NOT IN USE)
 ```{r}
 MCBA_boxplot<-MCBA_raw%>%
   gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
@@ -268,7 +269,7 @@ MCBA_boxplot_stats<-MCBA_boxplot%>%
   mutate(xmin=ifelse(xmin>4,xmin-1,xmin))%>%
   mutate(xmax=ifelse(xmax>4,xmax-1,xmax))
 
-#list of aa significant by wilcoxon or linear modelling
+#list of aa significant by linear modelling
 target_aa<-c("Tau","Gly","Unconjugated","Ala","Ile/Leu","Val","Phe","Trp","Tyr","Ser" ,"Pro","Glu","Lys")
 
 MCBA_boxplot_sort<-MCBA_boxplot%>%
@@ -379,8 +380,7 @@ MCBA_boxplot_stats<-MCBA_boxplot%>%
 (MCBA_siglist%>%left_join(.,MCBA_metadata,by="BA")%>%ungroup()%>%select(Amino_Acid)%>%unique())$Amino_Acid
 
 #list of aa significant by linear modelling
-aa_names<-c("Taurine","Glycine","Alanine","Isoleucine/Leucine","Valine","Phenylalanine","Tryptophan","Tyrosine","Serine","Glutamate","Histidine","Lysine")
-names(aa_names)<-c("Tau","Gly","Ala","Ile_Leu","Val","Phe","Trp","Tyr","Ser" ,"Glu","His","Lys")
+aa_names<-c("Tau"="Taurine","Gly"="Glycine","Ala"="Alanine","Ile_Leu"="Isoleucine/Leucine","Val"="Valine","Phe"="Phenylalanine","Trp"="Tryptophan","Tyr"="Tyrosine","Ser"="Serine","Glu"="Glutamate","His"="Histidine","Lys"="Lysine")
 
 MCBA_boxplot_sort<-MCBA_boxplot%>%
          filter(Core %in%filter(MCBA_boxplot_stats,qval<0.05)$Core &
@@ -427,11 +427,11 @@ ggsave("Figures/MCBA/MCBA_Boxplots.pdf",width=8.25, height=4)
 
 
 #Deconjugated 
-(MCBA_siglist%>%left_join(.,MCBA_metadata,by="BA")%>%filter(Amino_Acid=="Deconjugated")%>%unique())$BA
+(MCBA_siglist%>%left_join(.,MCBA_metadata,by="BA")%>%filter(Amino_Acid=="Deconjugated")%>%select(BA)%>%unique())$BA
 
 
 #order and add bMCA as that's in the amino acid plots
-decon_order<-c("CA","7-keto DCA","CDCA","DCA","12-oxo LCA","EDCA","LCA","3-oxo LCA", "isoLCA", "aMCA","bMCA", "wMCA","HCA", "HDCA")
+decon_order<-c("CA","CDCA","DCA","LCA","aMCA","bMCA","HCA","HDCA","7-keto DCA","EDCA","3-oxo LCA", "isoLCA","12-oxo LCA", "wMCA")
 
 decon_stats<-MCBA_boxplot_stats%>%
             filter(qval<0.05 & Amino_Acid=="Deconjugated" & BA %in% decon_order)%>%
@@ -473,7 +473,7 @@ ggplot(data=MCBA_boxplot%>%
                      step.group.by="sort",
                      inherit.aes=F)
 
-ggsave("Figures/MCBA/MCBA_Boxplots_Unconjugated.pdf",width=5.6, height=1.6)
+ggsave("Figures/MCBA/MCBA_Boxplots_Unconjugated.pdf",width=4.7, height=1.6)
 
 ###Now everything for supp
 ggplot(data=MCBA_boxplot%>%filter(Amino_Acid!="Deconjugated"),aes(x=Core,y=value,fill=prepost, group=interaction(Core,prepost)))+

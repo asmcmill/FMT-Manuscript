@@ -283,7 +283,91 @@ ggplot(BSH_family,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
 ggsave("Figures/BSH/BSH_family_plot.pdf",height=2,width=3.2, units="in")
 ```
 
+#Species Heatmap
 
+```{r}
+BSH_hmap<-BSH%>%
+        select(species,samplekey$CLIENT.IDENTIFIER)%>%
+        gather(CLIENT.IDENTIFIER,CPM,-species)%>%
+        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=samplekey$CLIENT.IDENTIFIER))%>%
+        filter(CPM!=0)%>%
+        group_by(species)%>%
+        mutate(count=n())%>%
+        mutate(species=if_else(count<5|is.na(species),"Other",species))%>%
+        select(-count)%>%
+        group_by(species,CLIENT.IDENTIFIER)%>%
+        summarise(CPM=sum(CPM))%>%
+        mutate(CPM=log10(CPM+1))%>% #Transform for plot
+        complete(CLIENT.IDENTIFIER,fill=list(Species="Other",CPM=0))%>% #Some samples didn't have BSHs
+        spread(CLIENT.IDENTIFIER,CPM)%>%
+        select(species,samplekey$CLIENT.IDENTIFIER)%>%
+        left_join(.,BSH%>%select(species,family)%>%unique(),by="species")%>%
+        mutate(family=replace_na(family,"Other"))%>%
+        mutate(species=str_remove(species,"s__"))%>%
+        mutate(species=str_replace_all(species,"_"," "))%>%
+        # separate(species,into=c("genus","species"),sep=" ",extra="merge")%>%
+        # mutate(genus=if_else(genus=="Other","Other",paste0(str_extract(genus,"."),".")))%>%
+        # mutate(species=if_else(genus=="Other","Other",paste(genus, species)))%>%
+        # select(-genus)%>%
+        column_to_rownames("species")
+
+pheatmap(BSH_hmap[1:45],
+         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
+         annotation_row=BSH_hmap%>%select(family),
+         annotation_colors = list(TIME.POINT.2=anno_color$TIME.POINT.2, family=anno_color$familyplot[names(anno_color$familyplot) %in% BSH_hmap$family]),
+         cluster_cols=F,
+         cluster_rows=T,
+         show_colnames = F,
+         annotation_names_col = F,
+         annotation_names_row = F,
+         fontsize=12,
+         fontsize_row=12,
+         color=colorRampPalette(c("white","grey","black"),bias=2)(50),
+         filename="Figures/BSH/BSH_top_heatmap.pdf",
+         border_color="grey20",
+         drop_levels=T,
+         width=11,
+         height=6
+)
+
+##All species, supplemental figure, do not summarize low responders to "Other"
+BSH_hmap_all<-BSH%>%
+        select(species,samplekey$CLIENT.IDENTIFIER)%>%
+        gather(CLIENT.IDENTIFIER,CPM,-species)%>%
+        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=samplekey$CLIENT.IDENTIFIER))%>%
+        filter(CPM!=0)%>%
+        group_by(species,CLIENT.IDENTIFIER)%>%
+        summarise(CPM=sum(CPM))%>%
+        mutate(CPM=log10(CPM+1))%>% #Transform for plot
+        complete(CLIENT.IDENTIFIER,fill=list(Species="Other",CPM=0))%>% #Some samples didn't have BSHs
+        spread(CLIENT.IDENTIFIER,CPM)%>%
+        select(species,samplekey$CLIENT.IDENTIFIER)%>%
+        left_join(.,BSH%>%select(species,family)%>%unique(),by="species")%>%
+        mutate(family=replace_na(family,"Other"))%>%
+        mutate(species=str_remove(species,"s__"))%>%
+        mutate(species=str_replace_all(species,"_"," "))%>%
+        mutate(species=replace_na(species,"Other"))%>%
+        column_to_rownames("species")
+
+pheatmap(BSH_hmap_all[1:45],
+         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
+         annotation_row=BSH_hmap_all%>%select(family),
+         annotation_colors = list(TIME.POINT.2=anno_color$TIME.POINT.2, family=anno_color$familyplot[names(anno_color$familyplot) %in% BSH_hmap_all$family]),
+         cluster_cols=F,
+         cluster_rows=T,
+         show_colnames = F,
+         annotation_names_col = F,
+         annotation_names_row = F,
+         fontsize=12,
+         fontsize_row=12,
+         color=colorRampPalette(c("white","grey","black"),bias=2)(50),
+         filename="Figures/Supplementals/BSH_all_heatmap.pdf",
+         border_color="grey20",
+         drop_levels=T,
+         width=11,
+         height=12
+)
+```
 
 # Correlation
 ```{r}
@@ -370,17 +454,18 @@ MCBA_BSH_anno<-as.data.frame(colnames(MCBA_BSH_cor_plot))%>%
   dplyr::rename("BSH"=1)%>%
   separate(BSH,into=c("UniRef","species"),sep=" ",extra="merge",remove=F)%>%
   left_join(.,BSH%>%
-              select(species,phylum)%>%
+              select(species,family)%>%
               mutate(species=str_remove(species,"s__"))%>%
               mutate(species=str_replace_all(species,"_"," "))%>%
               unique(),by="species")%>%
-  column_to_rownames("BSH")
+  column_to_rownames("BSH")%>%
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))
 
 pheatmap(MCBA_BSH_cor_plot,
-         annotation_col=MCBA_BSH_anno%>%select(phylum),
+         annotation_col=MCBA_BSH_anno%>%select(family),
          cluster_rows=F,
          cluster_cols=T,
-         annotation_colors=list(phylum=anno_color$phylumplot[which(names(anno_color$phylumplot) %in% unique(c(MCBA_BSH_anno$phylum,BA_BSH_anno$phylum)))]),
+         annotation_colors=list(family=anno_color$familyplot[which(names(anno_color$familyplot) %in% unique(MCBA_BSH_anno$family))]),
          fontsize=12,
          breaks=seq(-1,1,2/60),
          color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
@@ -396,90 +481,3 @@ library(pheatmap)
 saveRDS(BA_cor$p.adj,"Dataframes/Stats/BSH vs BA spearman t test holm.rds")
 saveRDS(MCBA_cor$p.adj,"Dataframes/Stats/BSH vs MCBA spearman t test holm.rds")
 ```
-
-#Species Heatmap
-
-```{r}
-BSH_hmap<-BSH%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        gather(CLIENT.IDENTIFIER,CPM,-species)%>%
-        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=samplekey$CLIENT.IDENTIFIER))%>%
-        filter(CPM!=0)%>%
-        group_by(species)%>%
-        mutate(count=n())%>%
-        mutate(species=if_else(count<5|is.na(species),"Other",species))%>%
-        select(-count)%>%
-        group_by(species,CLIENT.IDENTIFIER)%>%
-        summarise(CPM=sum(CPM))%>%
-        mutate(CPM=log10(CPM+1))%>% #Transform for plot
-        complete(CLIENT.IDENTIFIER,fill=list(Species="Other",CPM=0))%>% #Some samples didn't have BSHs
-        spread(CLIENT.IDENTIFIER,CPM)%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        left_join(.,BSH%>%select(species,family)%>%unique(),by="species")%>%
-        mutate(family=replace_na(family,"Other"))%>%
-        mutate(species=str_remove(species,"s__"))%>%
-        mutate(species=str_replace_all(species,"_"," "))%>%
-        # separate(species,into=c("genus","species"),sep=" ",extra="merge")%>%
-        # mutate(genus=if_else(genus=="Other","Other",paste0(str_extract(genus,"."),".")))%>%
-        # mutate(species=if_else(genus=="Other","Other",paste(genus, species)))%>%
-        # select(-genus)%>%
-        column_to_rownames("species")
-
-pheatmap(BSH_hmap[1:45],
-         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
-         annotation_row=BSH_hmap%>%select(family),
-         annotation_colors = list(TIME.POINT.2=anno_color$TIME.POINT.2, family=anno_color$familyplot[names(anno_color$familyplot) %in% BSH_hmap$family]),
-         cluster_cols=F,
-         cluster_rows=T,
-         show_colnames = F,
-         annotation_names_col = F,
-         annotation_names_row = F,
-         fontsize=12,
-         fontsize_row=12,
-         color=colorRampPalette(c("white","grey","black"),bias=2)(50),
-         filename="Figures/BSH/BSH_top_heatmap.pdf",
-         border_color="grey20",
-         drop_levels=T,
-         width=9,
-         height=6
-)
-
-##All species, supplemental figure, do not summarize low responders to "Other"
-BSH_hmap_all<-BSH%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        gather(CLIENT.IDENTIFIER,CPM,-species)%>%
-        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=samplekey$CLIENT.IDENTIFIER))%>%
-        filter(CPM!=0)%>%
-        group_by(species,CLIENT.IDENTIFIER)%>%
-        summarise(CPM=sum(CPM))%>%
-        mutate(CPM=log10(CPM+1))%>% #Transform for plot
-        complete(CLIENT.IDENTIFIER,fill=list(Species="Other",CPM=0))%>% #Some samples didn't have BSHs
-        spread(CLIENT.IDENTIFIER,CPM)%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        left_join(.,BSH%>%select(species,family)%>%unique(),by="species")%>%
-        mutate(family=replace_na(family,"Other"))%>%
-        mutate(species=str_remove(species,"s__"))%>%
-        mutate(species=str_replace_all(species,"_"," "))%>%
-        mutate(species=replace_na(species,"Other"))%>%
-        column_to_rownames("species")
-
-pheatmap(BSH_hmap_all[1:45],
-         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
-         annotation_row=BSH_hmap_all%>%select(family),
-         annotation_colors = list(TIME.POINT.2=anno_color$TIME.POINT.2, family=anno_color$familyplot[names(anno_color$familyplot) %in% BSH_hmap_all$family]),
-         cluster_cols=F,
-         cluster_rows=T,
-         show_colnames = F,
-         annotation_names_col = F,
-         annotation_names_row = F,
-         fontsize=12,
-         fontsize_row=12,
-         color=colorRampPalette(c("white","grey","black"),bias=2)(50),
-         filename="Figures/Supplementals/BSH_all_heatmap.pdf",
-         border_color="grey20",
-         drop_levels=T,
-         width=11,
-         height=12
-)
-```
-

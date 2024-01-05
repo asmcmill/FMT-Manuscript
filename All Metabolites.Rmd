@@ -202,26 +202,26 @@ bch_fam_cor_plot<-left_join(as.data.frame(cor$p.adj)%>%
 
 tax_anno<-tax_metadata%>%
   filter(!is.na(family))%>%
-  select(family,phylum)%>%
+  select(family)%>%
   unique()%>%
   remove_rownames()%>%
   filter(family %in% colnames(bch_fam_cor_plot))%>%
-  mutate(phylum=factor(phylum,levels=names(anno_color$phylumplot)))%>%
-  droplevels()%>%
+  mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
   column_to_rownames("family")
 
 pheatmap(bch_fam_cor_plot,
          annotation_col = tax_anno,
          cluster_rows=F,
          cluster_cols=T,
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
+         breaks=seq(-1,1,2/60),
+         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
          border_color="grey20",
          cellheight = 12,
          cellwidth = 20,
          fontsize = 14,
          drop_levels = T,
          filename=paste0("Figures/Metabolites/bch_vs_fam_spearman.pdf"),
-         annotation_colors = list(phylum=anno_color$phylumplot[names(anno_color$phylumplot) %in% unique(tax_anno$phylum)]),
+         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(tax_anno$familyplot)]),
          width=14,
          height=14)
 

@@ -134,6 +134,7 @@ ggsave("Figures/Supplementals/AA_boxplots.pdf",height=11,width=8.5,units="in")
 pathway_aa<-pathway_raw%>%
   filter(!str_detect(pathway,"\\|"))%>%
   filter(str_detect(substr(pathway,0,10),"Amino-acid"))%>%
+  filter(pathway %in% pathway_siglist$pathway)%>%
   separate(pathway,into=c("type","amino","note"),sep=";",extra="merge")%>%
   separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
   filter(!str_detect(bolism,"regulation"))%>%
@@ -154,7 +155,7 @@ pheatmap(pathway_aa%>%
          cluster_cols=F,
          cluster_rows=T,
          color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
-         filename="Figures/Supplementals/amino acid biosynthesis.pdf",
+         filename="Figures/Supplementals/amino acid biosynthesis_sig.pdf",
          border_color="grey20",
          width=10,
          height=6)
@@ -177,12 +178,13 @@ pheatmap(pathway_aa%>%
 # family Plots
 ```{r}
 pathway_aa_spec<-pathway_raw%>%
-  filter(str_detect(pathway,"Amino-acid"))%>%
-  filter(str_detect(pathway,"\\|"))%>%
-  separate(pathway,into=c("type","amino","note", "species"),sep=";|\\.|\\|",extra="merge")%>%
+  filter(str_detect(pathway,"Amino-acid") & str_detect(pathway,"\\|"))%>%
+  separate(pathway, into=c("pathway","species"),sep="\\|",fill="right")%>%
+  #filter(pathway %in% pathway_siglist$pathway)%>%
+  separate(pathway,into=c("type","amino","note"),sep=";|\\.",extra="merge")%>%
   separate(amino,into=c("amino","bolism"),sep="_",extra="merge")%>%
   mutate(species=str_remove(species,"\\|"))%>%
-  separate(species,into=c("genus","species"),sep=".s__")%>%
+  separate(species,into=c("genus","species"),sep=".s__",fill="right")%>%
   mutate(genus=str_remove(genus,"g\\_\\_"))%>%
   left_join(.,tax_metadata%>%select(phylum,family,genus)%>%unique(),by="genus")%>%
   select(amino,bolism,"phylum","family","species",everything())%>%
@@ -199,51 +201,65 @@ pathway_aa_spec<-pathway_raw%>%
   select(amino,type,family,samplekey$CLIENT.IDENTIFIER)%>%
   mutate(amino=str_replace(amino,"\\.",""))%>%
   gather(key="CLIENT.IDENTIFIER",value="CPM",-amino,-family,-type)%>%
+  group_by(family)%>% #This is to clean up legend
+  mutate(max=max(CPM))%>%
+  group_by(amino)%>%
+  mutate(test=max/max(CPM))%>%
+  mutate(family=if_else(family %in% (filter(.,test>0.1))$family,family,"Other"))%>% #has to be at least 10% max to get color
   mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=unique(samplekey$CLIENT.IDENTIFIER)))%>%
   mutate(family=if_else(is.na(family),"Other",family))%>%
   mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
   droplevels()
 
-ggplot(pathway_aa_spec%>%
-         filter(type=="Amino-acid_degradation"),
-       aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
-  geom_bar(stat="identity")+
-  theme_bw()+
-  facet_wrap(~amino,ncol=5,scales="free_y")+
-  theme(axis.text.x=element_text(angle=-90),
-        text=element_text(size=12),
-        legend.position="none",
-        strip.text=element_text(size=8),
-        strip.background=element_blank(),
-        panel.grid.major.x = element_blank(),
-        panel.grid.minor.x= element_blank(),
-        axis.text.x.bottom = element_blank())+
-  scale_fill_manual(values = anno_color$familyplot)+
-  labs(x="",y="Complete Pathway Abundance (CPM)",fill="Family")+
-  ggtitle("Degradation")
+amino_names<-c(#non polar
+               "glycine"="Glycine",
+               "D-alanine"="D-alanine",
+               "L-isoleucine"="Isoleucine",
+               "L-leucine"="Leucine",
+               "L-methionine"="Methionine",
+               #aromatic
+               "L-phenylalanine"="Phenylalanine",
+               "L-tryptophan"="Tryptophan",
+               "L-tyrosine"="Tyrosine",
+               #Polar
+               "L-asparagine"="Asparagine",
+               "L-cysteine"="Cysteine",
+               "L-proline"="Proline",
+               "L-serine"="Serine",
+               "L-threonine"="Threonine",
+               #neg charge
+               "L-glutamate"="Glutamate",
+               #pos charge
+               "L-arginine"="Arginine",
+               "L-histidine"="Histidine",
+               "L-lysine"="Lysine",
+               #Other
+               "L-homocysteine"="Homocysteine",
+               "S-adenosyl-L-methionine"="S-adenosyl-L-methionine"
+               )
 
-ggsave("Figures/Supplementals/amino acid degradation_familyplot.pdf",height=3,width=8.25,units="in")
-
 ggplot(pathway_aa_spec%>%
-         filter(type=="Amino-acid_biosynthesis")%>%
-         complete(family,fill=list(amino="D-alanine",type="Amino-acid_biosynthesis",CLIENT.IDENTIFIER="R1_1",CPM=0))
+         mutate(amino=factor(amino,levels=names(amino_names)))%>%
+         filter(type=="Amino-acid_biosynthesis")
        ,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
   geom_bar(stat="identity")+
   theme_bw()+
-  facet_wrap(~amino,ncol=5,scales="free_y")+
+  facet_wrap(~amino,ncol=5,scales="free_y",labeller = as_labeller(amino_names))+
   theme(axis.text.x=element_text(angle=-90),
-        text=element_text(size=12),
-        legend.position="bottom",
+        text=element_text(size=8),
+        legend.position="right",
         strip.text=element_text(size=8),
         strip.background = element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x= element_blank(),
-        axis.text.x.bottom = element_blank())+
+        axis.text.x.bottom = element_blank(),
+        legend.box.margin=unit(c(0,0,0,0),"in"),
+        legend.text=element_text(size=8))+
   scale_fill_manual(values = anno_color$familyplot)+
-  labs(x="",y="Complete Pathway Abundance (CPM)",fill="Family")+
-  ggtitle("Biosynthesis")
+  guides(fill=guide_legend(ncol=1))+
+  labs(x="",y="Pathway Abundance (CPM)",fill="")
 
-ggsave("Figures/Supplementals/amino acid biosynthesis_familyplot.pdf",height=6,width=8.5,units="in")
+ggsave("Figures/Supplementals/amino acid biosynthesis_familyplot.pdf",height=5,width=8.5,units="in")
 ```
 # Species plots
 ```{r}
