@@ -10,7 +10,7 @@ library(tidyverse)
 library(janitor)
 library(randomForest)
 library(pheatmap)
-library(psych)
+library(writexl)
 
 sessionInfo()
 ```
@@ -22,6 +22,7 @@ samplekey<-readRDS("Dataframes/samplekey.rds")
 bch_raw<-readRDS("Dataframes/bch_raw.rds")
 bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
 bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+fam_siglist<-readRDS("Dataframes/Stats/fam_siglist.rds")
 tax_raw<-readRDS("Dataframes/tax_raw.rds")
 fam_for_cor<-readRDS("Dataframes/fam_for_cor.rds")
 bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
@@ -56,7 +57,7 @@ bch_forest_plot<-bch_forest$importance%>%
   rownames_to_column("biochem")%>%
   left_join(.,bch_metadata%>%
               select(BIOCHEMICAL,SUPER.PATHWAY,SUB.PATHWAY, dir)%>%
-              mutate(biochem=make_clean_names(BIOCHEMICAL)),by="biochem")%>%
+              mutate(biochem=janitor::make_clean_names(BIOCHEMICAL)),by="biochem")%>%
   filter(MeanDecreaseAccuracy>0)%>%
   arrange(-MeanDecreaseAccuracy)%>%
   group_by(dir)%>%
@@ -181,24 +182,28 @@ pheatmap(bch_all_hmap[1:45],
 )
 
 ```
-# Correlate with bacterial families
+
+# Repeated measure Correlations
 The big goal with this paper is to look for explanations in changes in metabolites by microbiota and vice versa. A correlation is a nice first step for this
 ```{r}
-cor<-corr.test(bch_for_cor[top_bch_forest],fam_for_cor,method="spearman",adjust="holm")
+source("Scripts/rm_corr_all.R")
+rmcor_bch_fam<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           fam_for_cor[levels(fam_siglist$clade_name)],
+                           bch_for_cor[top_bch_forest],
+                          "BH")
 
-bch_fam_cor_plot<-left_join(as.data.frame(cor$p.adj)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="p",-BIOCHEMICAL),
-  as.data.frame(cor$r)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
+bch_fam_cor_plot<-rmcor_bch_fam%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
   mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(top_bch_forest)))%>%
-  filter(p<=0.05)%>%
-  select(-p)%>%
-  complete(BIOCHEMICAL,fill=list(key="drop",r=0))%>%
-  spread(key=key,value=r,fill=0)%>%
-  column_to_rownames("BIOCHEMICAL")%>%
-  select(-drop)
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  select(-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  #filter(max(1:n())>1)%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+  mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  spread(key=clade_name,value=r,fill=0)%>%
+  column_to_rownames("BIOCHEMICAL")
 
 tax_anno<-tax_metadata%>%
   filter(!is.na(family))%>%
@@ -209,21 +214,49 @@ tax_anno<-tax_metadata%>%
   mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
   column_to_rownames("family")
 
+bch_fam_cor_p<-rmcor_bch_fam%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(top_bch_forest)))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  mutate(ast=symnum(p.adj,cutpoints=c(0,0.05,1),symbols=c("*","")))%>%
+  select(-r,-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+  spread(key=clade_name,value=ast,fill="")%>%
+  column_to_rownames("BIOCHEMICAL")
+
 pheatmap(bch_fam_cor_plot,
          annotation_col = tax_anno,
+         display_numbers=bch_fam_cor_p,
+         number_color="white",
          cluster_rows=F,
          cluster_cols=T,
+         clustering_distance_cols = "correlation",
          breaks=seq(-1,1,2/60),
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
+         color=c(rev(colorRampPalette(c("grey88","dodgerblue","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","red", "red3"),bias=1)(30)),
          border_color="grey20",
          cellheight = 12,
          cellwidth = 20,
          fontsize = 14,
          drop_levels = T,
-         filename=paste0("Figures/Metabolites/bch_vs_fam_spearman.pdf"),
+         filename=paste0("Figures/Metabolites/bch_vs_fam_rmcor_BH_all_new.pdf"),
          annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(tax_anno$familyplot)]),
-         width=14,
+         width=20,
          height=14)
 
-saveRDS(as.data.frame(cor$p.adj),"Dataframes/Stats/Metabolites vs Family correlation t tests.rds")
+saveRDS(rmcor_bch_fam,"Dataframes/Stats/Metabolites vs Family correlation.rds")
 ```
+
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("2A"=bch_forest_plot%>%filter(count<=25),
+                "2A linear mixed model"=bch_siglist,
+                "2A full RFA"=bch_forest_plot,
+                "2B"=bch_by_time,
+                "2C"=bch_fam_cor_plot,
+                "2C linear model"=rmcor_bch_fam),
+           "Excel Exports/Figure 2.xlsx")
+
+```
+

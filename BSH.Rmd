@@ -8,11 +8,13 @@ output: html_document
 ```{r setup, require=T, include=T}
 library(tidyverse)
 library(pheatmap)
-library(psych)
 library(ggpubr)
 library(muscle)
 library(curl)
 library(rstatix)
+library(janitor)
+library(randomForest)
+library(writexl)
 
 sessionInfo()
 ```
@@ -25,9 +27,11 @@ bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
 bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
 bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
 MCBA_for_cor<-readRDS("Dataframes/MCBA_for_cor.rds")
+MCBA_siglist<-readRDS("Dataframes/Stats/MCBA_siglist.rds")
 tax_metadata<-readRDS("Dataframes/tax_metadata.rds")
 ba_order<-readRDS("Dataframes/Bile acid order.rds")
 mcba_order<-readRDS("Dataframes/MCBA order.rds")
+tax_raw<-readRDS("Dataframes/tax_raw.rds")
 
 source("Scripts/Color codes.R")
 ```
@@ -50,10 +54,30 @@ BSH<-genes_raw%>%
                           genus=="Methanobrevibacter" ~ "Methanobacteriaceae",
                           genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae"))
 
+##I want to get rid of mapped species that are not in the metaphlan output. There is currently disagreement between Metaphlan 4 SGBs and Humann 3 pangenomes. For example, C. butyricum genes are sometimes mapping to C. difficile genomes as Humann 3 uses pangenomes that include C. butyricum and C. difficile
+
+tax_long<-tax_raw%>%
+  filter(str_detect(clade_name,";s__"))%>%
+  mutate(clade_name=str_remove(clade_name,".*s__"))%>%
+  gather(key="CLIENT.IDENTIFIER",value="relabun",-clade_name)%>%
+  mutate(clade_name=str_replace_all(clade_name,"_"," "))
+
+
 BSH_long<-BSH%>%
   gather(key="CLIENT.IDENTIFIER",value="CPM",-c("UniRef","phylum","family","genus","species"))%>%
   mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
-  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  mutate(species=str_remove(species,"s__"))%>%
+  mutate(species=str_replace_all(species,"_"," "))
+
+BSH_filt<-BSH_long%>%
+  left_join(.,tax_long,by=c("CLIENT.IDENTIFIER","species"="clade_name"))%>%
+  filter(relabun>0)%>%
+  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
+  select(-SUBJ.ID,-TIME.POINT.2,-prepost,-relabun)%>%
+  complete(CLIENT.IDENTIFIER,fill=list(UniRef="drop",phylum="drop",family="drop",species="drop",genus="drop",CPM=0))%>%
+  spread(key=CLIENT.IDENTIFIER,value=CPM,fill=0)%>%
+  filter(UniRef!="drop")
 
 
 #for writing
@@ -198,63 +222,7 @@ ggsave("Figures/BSH/BSH loop mean plot.pdf",height=2.5,width=2.7,units="in")
 saveRDS(BSH_loops_stats,"Dataframes/Stats/BSH loop boxplot wilcox signed rank holm.rds")
 ```
 
-# Plot Loops pre vs post
-I dont think these stats are OK to use, so lets not include it
-```{r}
-BSH_loops_prepost<-BSH%>%
-  mutate(UniRef=str_remove_all(UniRef,"UniRef90_|\\:.*"))%>%
-  left_join(.,alignment,by=c("UniRef"="Entry"))%>%
-  select(motif,genus,family,species,samplekey$CLIENT.IDENTIFIER)%>%
-  gather(key="CLIENT.IDENTIFIER",value="CPM",-motif,-genus,-species,-family)%>%
-  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
-  mutate(motif=factor(motif,levels=c("Glycine-preferring","Taurine-preferring","No Loop")))%>%
-    select(motif,CLIENT.IDENTIFIER,CPM,prepost,SUBJ.ID)%>%
-    group_by(motif,CLIENT.IDENTIFIER,prepost,SUBJ.ID)%>%
-  summarize(sum=sum(CPM))
-  
-BSH_loops_stats_prepost<-BSH_loops_prepost%>%
-  left_join(.,samplekey%>%select(CLIENT.IDENTIFIER,TIME.POINT.2),by="CLIENT.IDENTIFIER")%>%
-  ungroup()%>%
-  select(sum, TIME.POINT.2, prepost, SUBJ.ID, motif)%>%
-  complete(prepost, SUBJ.ID,motif,TIME.POINT.2, fill=list(sum=NA))%>%
-  spread(key=prepost,value=sum,fill=NA)%>%
-  group_by(SUBJ.ID,motif)%>%
-  fill(Pre, .direction="down")%>% ##I need to double check with a statistician if re-using the same pre for each post is OK
-  filter(!is.na(Post))%>%
-  gather(key="prepost",value="sum",-SUBJ.ID,-motif,-TIME.POINT.2)%>%
-  left_join(.,samplekey%>%select(SUBJ.ID,TIME.POINT.2,CLIENT.IDENTIFIER),by=c("SUBJ.ID","TIME.POINT.2"))%>%
-  group_by(motif)%>%
-  pairwise_wilcox_test(sum ~ prepost,
-                       p.adjust.method="holm",
-                       ref.group = "Pre",
-                       paired=T)%>%
-  add_xy_position(x="prepost")
 
-ggplot(data=BSH_loops_prepost,aes(x=prepost,y=sum,fill=prepost))+
-  geom_dotplot(binaxis="y",stackdir="center",binwidth=260/50,dotsize=1,stroke=0.5)+
-  geom_boxplot(alpha=0,linewidth=0.3)+
-  facet_wrap(~motif)+
-  theme_bw()+
-  theme(text=element_text(size=8),
-        legend.position="none",
-        axis.text.x=element_text(angle=-90),
-        panel.grid.major.x = element_blank(),
-        panel.grid.minor.x= element_blank(),
-        strip.background=element_blank())+
-  labs(y = "Total BSH Abundance (CPM)",
-       x= "",
-       fill="Time Post FMT")+
-  scale_y_continuous(expand=c(0,2,0,25),breaks=c(0,100,200,300,400))+
-  scale_fill_manual(values=anno_color$TIME.POINT.2)+
-  stat_pvalue_manual(filter(BSH_loops_stats_prepost,p.adj<0.05), 
-                     label = "p.adj.signif",
-                     tip.length=0.01,
-                     step.increase=0.05,
-                     step.group.by="motif",
-                     inherit.aes=F)
-
-ggsave("Figures/BSH/BSH loop mean plot_prepost.pdf",height=2.5,width=2.7,units="in") 
-```
 # Family Plot BSHs
 ```{r}
 #Make sure we have colors for everyone
@@ -284,53 +252,8 @@ ggsave("Figures/BSH/BSH_family_plot.pdf",height=2,width=3.2, units="in")
 ```
 
 #Species Heatmap
-
 ```{r}
-BSH_hmap<-BSH%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        gather(CLIENT.IDENTIFIER,CPM,-species)%>%
-        mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=samplekey$CLIENT.IDENTIFIER))%>%
-        filter(CPM!=0)%>%
-        group_by(species)%>%
-        mutate(count=n())%>%
-        mutate(species=if_else(count<5|is.na(species),"Other",species))%>%
-        select(-count)%>%
-        group_by(species,CLIENT.IDENTIFIER)%>%
-        summarise(CPM=sum(CPM))%>%
-        mutate(CPM=log10(CPM+1))%>% #Transform for plot
-        complete(CLIENT.IDENTIFIER,fill=list(Species="Other",CPM=0))%>% #Some samples didn't have BSHs
-        spread(CLIENT.IDENTIFIER,CPM)%>%
-        select(species,samplekey$CLIENT.IDENTIFIER)%>%
-        left_join(.,BSH%>%select(species,family)%>%unique(),by="species")%>%
-        mutate(family=replace_na(family,"Other"))%>%
-        mutate(species=str_remove(species,"s__"))%>%
-        mutate(species=str_replace_all(species,"_"," "))%>%
-        # separate(species,into=c("genus","species"),sep=" ",extra="merge")%>%
-        # mutate(genus=if_else(genus=="Other","Other",paste0(str_extract(genus,"."),".")))%>%
-        # mutate(species=if_else(genus=="Other","Other",paste(genus, species)))%>%
-        # select(-genus)%>%
-        column_to_rownames("species")
-
-pheatmap(BSH_hmap[1:45],
-         annotation_col=samplekey%>%column_to_rownames("CLIENT.IDENTIFIER")%>%select(TIME.POINT.2),
-         annotation_row=BSH_hmap%>%select(family),
-         annotation_colors = list(TIME.POINT.2=anno_color$TIME.POINT.2, family=anno_color$familyplot[names(anno_color$familyplot) %in% BSH_hmap$family]),
-         cluster_cols=F,
-         cluster_rows=T,
-         show_colnames = F,
-         annotation_names_col = F,
-         annotation_names_row = F,
-         fontsize=12,
-         fontsize_row=12,
-         color=colorRampPalette(c("white","grey","black"),bias=2)(50),
-         filename="Figures/BSH/BSH_top_heatmap.pdf",
-         border_color="grey20",
-         drop_levels=T,
-         width=11,
-         height=6
-)
-
-##All species, supplemental figure, do not summarize low responders to "Other"
+##All species, supplemental figure
 BSH_hmap_all<-BSH%>%
         select(species,samplekey$CLIENT.IDENTIFIER)%>%
         gather(CLIENT.IDENTIFIER,CPM,-species)%>%
@@ -367,9 +290,10 @@ pheatmap(BSH_hmap_all[1:45],
          width=11,
          height=12
 )
+
 ```
 
-# Correlation
+# Correlation Repeated measures
 ```{r}
 BSH_for_cor<-BSH%>%
         select(species,UniRef,samplekey$CLIENT.IDENTIFIER)%>%
@@ -383,70 +307,38 @@ BSH_for_cor<-BSH%>%
       
 saveRDS(BSH_for_cor,"Dataframes/BSH_for_cor.rds")
 
-all_BA<-bch_metadata%>%
-  filter(SUB.PATHWAY %in% c("Secondary Bile Acid Metabolism","Primary Bile Acid Metabolism"))%>%
-  filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)
-
-#Make sure I'm correlating the right things
-identical(rownames(BSH_for_cor),rownames(bch_for_cor[,which(colnames(bch_for_cor) %in% all_BA$BIOCHEMICAL)]))
-
-BA_cor<-corr.test(bch_for_cor[,which(colnames(bch_for_cor) %in% all_BA$BIOCHEMICAL)],BSH_for_cor,method="spearman",adjust="holm")
-
-BA_BSH_cor_plot<-left_join(as.data.frame(BA_cor$p.adj)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="p",-BIOCHEMICAL),
-  as.data.frame(BA_cor$r)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
-  filter(p<=0.05)%>%
-  select(-p)%>%
-  spread(key=key,value=r,fill=0)%>%
- mutate(BIOCHEMICAL=factor(BIOCHEMICAL, levels=rev(ba_order)))%>%
-  arrange(BIOCHEMICAL)%>%
-  column_to_rownames("BIOCHEMICAL")
-
-BA_BSH_anno<-as.data.frame(colnames(BA_BSH_cor_plot))%>%
-  dplyr::rename("BSH"=1)%>%
-  separate(BSH,into=c("UniRef","species"),sep=" ",extra="merge",remove=F)%>%
-  left_join(.,BSH%>%
-              select(species,phylum)%>%
-              mutate(species=str_remove(species,"s__"))%>%
-              mutate(species=str_replace_all(species,"_"," "))%>%
-              unique(),by="species")%>%
-  column_to_rownames("BSH")
-
 source("Scripts/pheatmap_left.R")
 
-pheatmap(BA_BSH_cor_plot,
-         annotation_col=BA_BSH_anno%>%select(phylum),
-         cluster_rows=F,
-         cluster_cols=T,
-         annotation_colors=list(phylum=anno_color$phylumplot[which(names(anno_color$phylumplot) %in% BA_BSH_anno$phylum)]),
-         fontsize=12,
-         breaks=seq(-1,1,2/60),
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
-         filename=paste0("Figures/BSH/BA_vs_BSH_spearman_all.pdf"),
-         width=6,
-         height=6,
-         angle_col=270)
+source("Scripts/rm_corr_all.R")
+
+rmcor_MCBA_BSH<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           BSH_for_cor,
+                          MCBA_for_cor[mcba_order],
+                          "BH")
 
 
-#Make sure I'm correlating the right things
-identical(rownames(BSH_for_cor),rownames(MCBA_for_cor))
-
-MCBA_cor<-corr.test(MCBA_for_cor[,colnames(MCBA_for_cor) %in% mcba_order],BSH_for_cor,method="spearman",adjust="holm")
-#[,colnames(MCBA_for_cor) %in% mcba_order]
-
-MCBA_BSH_cor_plot<-left_join(as.data.frame(MCBA_cor$p.adj)%>%
-  rownames_to_column("BA")%>%
-  gather(key="key",value="p",-BA),
-  as.data.frame(MCBA_cor$r)%>%
-  rownames_to_column("BA")%>%
-  gather(key="key",value="r",-BA),by=c("BA","key"))%>%
-  filter(p<=0.05)%>%
-  select(-p)%>%
-  spread(key=key,value=r,fill=0)%>%
+MCBA_BSH_cor_plot<-rmcor_MCBA_BSH%>%
+  dplyr::rename("BA"=df2,"BSH"=df1)%>%
   mutate(BA=factor(BA, levels=rev(mcba_order)))%>%
+  filter(!is.na(BA))%>%
+  filter(BSH %in% (filter(.,p.adj<=0.05))$BSH)%>%
+  select(-p,-p.adj)%>%
+  group_by(BSH)%>%
+  spread(key=BSH,value=r,fill=0)%>%
+  arrange(BA)%>%
+  column_to_rownames("BA")
+
+MCBA_BSH_cor_p<-rmcor_MCBA_BSH%>%
+  dplyr::rename("BA"=df2,"BSH"=df1)%>%
+  mutate(BA=factor(BA, levels=rev(mcba_order)))%>%
+  filter(!is.na(BA))%>%
+  #filter(p.adj<=0.05)%>%
+  filter(BSH %in% (filter(.,p.adj<=0.05))$BSH)%>%
+  mutate(ast=symnum(p.adj,cutpoints=c(0,0.05,1),symbols=c("*","")))%>%
+  select(-r,-p,-p.adj)%>%
+  group_by(BSH)%>%
+  spread(key=BSH,value=ast,fill="")%>%
   arrange(BA)%>%
   column_to_rownames("BA")
 
@@ -461,23 +353,83 @@ MCBA_BSH_anno<-as.data.frame(colnames(MCBA_BSH_cor_plot))%>%
   column_to_rownames("BSH")%>%
   mutate(family=factor(family,levels=names(anno_color$familyplot)))
 
-pheatmap(MCBA_BSH_cor_plot,
+fam_list<-names(anno_color$familyplot)[names(anno_color$familyplot) %in% unique(MCBA_BSH_anno$family)]
+for (f in 1:length(fam_list)){
+    d<-MCBA_BSH_cor_plot[which(colnames(MCBA_BSH_cor_plot) %in% rownames(filter(MCBA_BSH_anno,family==fam_list[f])))]
+    p<-MCBA_BSH_cor_p[which(colnames(MCBA_BSH_cor_plot) %in% rownames(filter(MCBA_BSH_anno,family==fam_list[f])))]
+    rn=F
+    w=1/6*ncol(d)+0.1
+    l=F
+  
+  if(ncol(d)==1){clust=F}else{clust=T}
+    
+  if(f==1){
+    rn=T 
+    w=w+1.2}
+
+  if(f==14){
+    l=T
+    w=w+0.6}
+    
+  inames<-  as_tibble(colnames(d))%>%
+    separate(value, into=c("UniRef","strain"),sep=" ",extra="merge",remove=F)
+  
+  names<-mapply(function (x,y) bquote(plain(.(x))~italic(.(y))),inames$UniRef,inames$strain)
+  
+pheatmap(d,
          annotation_col=MCBA_BSH_anno%>%select(family),
+         display_numbers=p,
+         labels_col=as.expression(names),
+         number_color="white",
+         cluster_distance_cols="correlation",
          cluster_rows=F,
-         cluster_cols=T,
+         cluster_cols=clust,
          annotation_colors=list(family=anno_color$familyplot[which(names(anno_color$familyplot) %in% unique(MCBA_BSH_anno$family))]),
+         annotation_names_col=F,
+         show_rownames=rn,
          fontsize=12,
+         cellheight = 12,
+         cellwidth = 12,
+         legend=l,
+         annotation_legend=F,
          breaks=seq(-1,1,2/60),
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","white", "red3"),bias=1)(30)),
-         filename=paste0("Figures/BSH/MCBA_vs_BSH_correlation_heatmap.pdf"),
-         width=6,
-         height=6,
+ color=c(rev(colorRampPalette(c("grey88","dodgerblue","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","red", "red3"),bias=1)(30)),
+         filename=paste0("Figures/BSH/MCBA_vs_BSH_rmcor_BH_RF_",f,".pdf"),
+         width=w,
+         height=12,
          angle_col=270)
+}
 
 ##Reset the pheatmap left overwrite
 detach("package:pheatmap", unload = TRUE)
 library(pheatmap)
 
-saveRDS(BA_cor$p.adj,"Dataframes/Stats/BSH vs BA spearman t test holm.rds")
-saveRDS(MCBA_cor$p.adj,"Dataframes/Stats/BSH vs MCBA spearman t test holm.rds")
+saveRDS(rmcor_MCBA_BSH,"Dataframes/Stats/BSH vs MCBA rmcor.rds")
+
+#for writing
+colnames(MCBA_BSH_cor_plot)%>%
+  as_tibble()%>%
+  separate(value, into="UniProt",extra="drop")%>%
+  group_by(UniProt)%>%
+  summarize(count=n())%>%
+  arrange(-count)%>%
+  head(10)
 ```
+
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("6A"=BSH_by_time,
+                "6A Wilcoxon signed rank"=BSH_boxplot_stats,
+                "6B"=BSH_loops,
+                "6B Wilcoxon signed rank"=BSH_loops_stats,
+                "6C"=BSH_family,
+                "6D"=MCBA_BSH_cor_plot,
+                "6D linear model"=rmcor_MCBA_BSH),
+           "Excel Exports/Figure 6.xlsx")
+
+write_xlsx(list("S6"=BSH_hmap_all),
+           "Excel Exports/Figure S6.xlsx")
+
+```
+
+

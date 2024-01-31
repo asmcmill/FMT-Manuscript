@@ -22,96 +22,43 @@ write_xlsx(list("Sample Metadata"=readRDS("Dataframes/samplekey.rds"),
                 "Bile Acid Altering Enzymes"=readRDS("Dataframes/bae_raw.rds"),
                 "AMR Genes"=readRDS("Dataframes/AMR_raw.rds"),
                 "Pathway Data"=readRDS("Dataframes/pathway_raw.rds")),
-           "Excel Exports/Supplemental Data File.xlsx")
+           "Excel Exports/All Raw Data File.xlsx")
 
 ```
 
 ```{r}
-#Stats File
-write_xlsx(list("Untar. Metabolo. Lin. Mod."=readRDS("Dataframes/Stats/bch_siglist.rds"),
-                "Family Lin. Mod."=readRDS("Dataframes/Stats/fam_siglist.rds"),
-                "Tar. Metabolo. Lin. Mod."=readRDS("Dataframes/Stats/MCBA_siglist.rds"),
-                "Pathway Lin. Mod."=readRDS("Dataframes/Stats/pathway_siglist.rds"),
-                #NMDS Stats
-                "Untar. Metabolo. Adonis"=readRDS("Dataframes/Stats/metabolites_adonis.rds"),
-                "Tar. Metabolo. Adonis"=readRDS("Dataframes/Stats/MCBA_adonis.rds"),
-                "Genes Adonis"=readRDS("Dataframes/Stats/genes_adonis.rds"),
-                "Species Adonis"=readRDS("Dataframes/Stats/taxonomy_adonis.rds"),
-                #Boxplots
-                "Alpha Diversity wilcox sr"=readRDS("Dataframes/Stats/Shannon Diversity_Wilcox SR_holm.rds"),
-                "Carnitine metab. wilcox sr"=readRDS("Dataframes/Stats/Carnitine metabolism_wilcox_signed_rank_holm.rds"),
-                "BSH wilcox sr"=readRDS("Dataframes/Stats/All BSH boxplot wilcox signed rank holm.rds"),
-                "BSH loops wilcox sr"=readRDS("Dataframes/Stats/BSH loop boxplot wilcox signed rank holm.rds"),
-                "AMR genes wilcox sr"=readRDS("Dataframes/Stats/AMR_genes_wilcox_signedrank.rds"),
-                "Bile alt. enz. wilcox sr"=readRDS("Dataframes/Stats/BAE wilcox signed rank holm.rds"),
-                "Stickland wilcox sr"=readRDS("Dataframes/Stats/stickland wilcox sr holm.rds"),
-                #Random Forests
-                "RFA Untar. Metabolo."=readRDS("Dataframes/Stats/full metabolite forest.rds")%>%as.data.frame(),
-                "RFA Untar. Bile Acids"=readRDS("Dataframes/Stats/Untargeted Bile Acid RFA.rds")%>%as.data.frame(),
-                "RFA Amino Acid"=readRDS("Dataframes/Stats/Full amino acid forest.rds")%>%as.data.frame(),
-                "RFA Tar. Metabolo."=readRDS("Dataframes/Stats/Full MCBA forest.rds")%>%as.data.frame(),
-                #Correlations
-                "Untar. vs fam cor t tests"=readRDS("Dataframes/Stats/Metabolites vs Family correlation t tests.rds")%>%as.data.frame(),
-                "Carn. pwy v Carn. cor t tests"=readRDS("Dataframes/Stats/Carn metabolism vs Carn correlation t test holm.rds")%>%as.data.frame(),
-                "Untar. BA vs fam cor t tests"=readRDS("Dataframes/Stats/Untargeted bile acids vs families spearman t test holm.rds")%>%as.data.frame(),
-                "AA v fam cor t tests"=readRDS("Dataframes/Stats/AA vs Family correlation t test holm.rds")%>%as.data.frame(),
-                "Tar. BA vs fam cor t tests"=readRDS("Dataframes/Stats/MCBA vs family spearman t test holm.rds")%>%as.data.frame(),
-                "BSH vs untar. BA cor t tests"=readRDS("Dataframes/Stats/BSH vs BA spearman t test holm.rds")%>%as.data.frame(),
-                "BSH vs tar. BA cor t tests"=readRDS("Dataframes/Stats/BSH vs MCBA spearman t test holm.rds")%>%as.data.frame()
-                ),
-           "Excel Exports/Supplemental All Stats file.xlsx")
+#Table S1
+s1<-readRDS("Dataframes/Stats/fam_siglist.rds")%>%
+  select(clade_name,metadata,value,coef,stderr,N,N.not.0,pval,qval)
 
-write_xlsx(list("1B Adonis"=readRDS("Dataframes/Stats/taxonomy_adonis.rds"),
-                "1C Adonis"=readRDS("Dataframes/Stats/genes_adonis.rds"),
-                "1D Adonis"=readRDS("Dataframes/Stats/metabolites_adonis.rds"),
-                "1E Adonis"=readRDS("Dataframes/Stats/MCBA_adonis.rds"),
-                "1F Wilcox SR_holm"=readRDS("Dataframes/Stats/Shannon Diversity_Wilcox SR_holm.rds"),
-                "1G Linear mixed model"=readRDS("Dataframes/Stats/fam_siglist.rds")
-              ),
-           "Excel Exports/Figure 1 stats.xlsx")
+write_xlsx(s1,"Excel Exports/Table S1.xlsx")
 
-write_xlsx(list("2A Linear mixed model"=readRDS("Dataframes/Stats/bch_siglist.rds"),
-  "2A RFA"=readRDS("Dataframes/Stats/full metabolite forest.rds")%>%as.data.frame(),
-  "2C Spearman t test_holm"=readRDS("Dataframes/Stats/Metabolites vs Family correlation t tests.rds")%>%as.data.frame()
-  ),
-"Excel Exports/Figure 2 stats.xlsx")
+#Table S2
+s2<-readRDS("Dataframes/Stats/bch_siglist.rds")%>%
+  select(BIOCHEMICAL,metadata,value,coef,stderr,N,N.not.0,pval,qval)
 
-write_xlsx(list("3A Wilcox SR_holm"=readRDS("Dataframes/Stats/Carnitine metabolism_wilcox_signed_rank_holm.rds"),
-                "3C Spearman t test_holm"=readRDS("Dataframes/Stats/Carn metabolism vs Carn correlation t test holm.rds")%>%as.data.frame()
-  ),
-"Excel Exports/Figure 3 stats.xlsx")
+write_xlsx(s2,"Excel Exports/Table S2.xlsx")
 
-write_xlsx(list("4A Linear mixed model"=readRDS("Dataframes/Stats/bch_siglist.rds"),
-                "4A RFA"=readRDS("Dataframes/Stats/Untargeted Bile Acid RFA.rds")%>%as.data.frame(),
-                "4C Spearman t test_holm"=readRDS("Dataframes/Stats/Untargeted bile acids vs families spearman t test holm.rds")%>%as.data.frame()
-  ),
-"Excel Exports/Figure 4 stats.xlsx")
+#Table S3
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+s3<-bch_for_cor[unique(bch_siglist$BIOCHEMICAL)]%>%
+  t()%>%
+  as.data.frame()%>%
+  rownames_to_column("BIOCHEMICAL")
 
-write_xlsx(list("5A Linear mixed model"=readRDS("Dataframes/Stats/bch_siglist.rds"),
-                "5A RFA"=readRDS("Dataframes/Stats/Full amino acid forest.rds")%>%as.data.frame(),
-                "5C Spearman t test_holm"=readRDS("Dataframes/Stats/AA vs Family correlation t test holm.rds")%>%as.data.frame()
-  ),
-"Excel Exports/Figure 5 stats.xlsx")
+write_xlsx(s3,"Excel Exports/Table S3.xlsx")
 
-write_xlsx(list("6A RFA"=readRDS("Dataframes/Stats/Full MCBA forest.rds")%>%as.data.frame(),
-                "6C Spearman t test_holm"=readRDS("Dataframes/Stats/MCBA vs family spearman t test holm.rds")%>%as.data.frame(),
-                "6D Linear mixed model"=readRDS("Dataframes/Stats/bch_siglist.rds")
-  ),
-"Excel Exports/Figure 6 stats.xlsx")
+#Table S4
+s4<-readRDS("Dataframes/Stats/MCBA_siglist.rds")%>%
+  select(BA,metadata,value,coef,stderr,N,N.not.0,pval,qval)
 
-write_xlsx(list("7A Wilcox SR_holm"=readRDS("Dataframes/Stats/All BSH boxplot wilcox signed rank holm.rds"),
-                "7B Wilcox SR_holm"=readRDS("Dataframes/Stats/BSH loop boxplot wilcox signed rank holm.rds"),
-                "7E Spearman t test_holm"=readRDS("Dataframes/Stats/BSH vs BA spearman t test holm.rds")%>%as.data.frame(),
-                "7F Spearman t test_holm"=readRDS("Dataframes/Stats/BSH vs MCBA spearman t test holm.rds")%>%as.data.frame()
-  ),
-"Excel Exports/Figure 7 stats.xlsx")
+write_xlsx(s4,"Excel Exports/Table S4.xlsx")
 
-write_xlsx(list("AMR Wilcox SR_holm"=readRDS("Dataframes/Stats/AMR_genes_wilcox_signedrank.rds"),
-                "BAAE Wilcox SR_holm"=readRDS("Dataframes/Stats/BAE wilcox signed rank holm.rds"),
-                "Stickland Wilcox SR_holm"=readRDS("Dataframes/Stats/stickland wilcox sr holm.rds")
-  ),
-"Excel Exports/Supplemental figure stats.xlsx")
+#Table S5
+s5<-readRDS("Dataframes/AMR_raw.rds")
 
+write_xlsx(s5,"Excel Exports/Table S5.xlsx")
 
 ```
 

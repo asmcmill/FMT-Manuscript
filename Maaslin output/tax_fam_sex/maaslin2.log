@@ -1,0 +1,81 @@
+2024-01-25 18:06:59 INFO::Writing function arguments to log file
+2024-01-25 18:06:59 DEBUG::Function arguments
+2024-01-25 18:06:59 DEBUG::Output folder: Maaslin output/tax_fam_sex
+2024-01-25 18:06:59 DEBUG::Min Abundance: 0.000000
+2024-01-25 18:06:59 DEBUG::Min Prevalence: 0.100000
+2024-01-25 18:06:59 DEBUG::Normalization: NONE
+2024-01-25 18:06:59 DEBUG::Transform: LOG
+2024-01-25 18:06:59 DEBUG::Analysis method: LM
+2024-01-25 18:06:59 DEBUG::Max significance: 0.050000
+2024-01-25 18:06:59 DEBUG::Random effects: SUBJ.ID
+2024-01-25 18:06:59 DEBUG::Fixed effects: sex
+2024-01-25 18:06:59 DEBUG::Correction method: bonferroni
+2024-01-25 18:06:59 DEBUG::Standardize: TRUE
+2024-01-25 18:06:59 DEBUG::Cores: 1
+2024-01-25 18:06:59 INFO::Verifying options selected are valid
+2024-01-25 18:07:01 INFO::Determining format of input files
+2024-01-25 18:07:01 INFO::Input format is data samples as rows and metadata samples as rows
+2024-01-25 18:07:01 DEBUG::A total of 45 samples were found in both the data and metadata
+2024-01-25 18:07:01 DEBUG::Reordering data/metadata to use same sample ordering
+2024-01-25 18:07:01 INFO::Formula for random effects: expr ~ (1 | SUBJ.ID)
+2024-01-25 18:07:01 INFO::Formula for fixed effects: expr ~  sex
+2024-01-25 18:07:01 INFO::Filter data based on min abundance and min prevalence
+2024-01-25 18:07:01 INFO::Total samples in data: 45
+2024-01-25 18:07:01 INFO::Min samples required with min abundance for a feature not to be filtered: 4.500000
+2024-01-25 18:07:01 INFO::Total filtered features: 22
+2024-01-25 18:07:01 INFO::Filtered feature names from abundance and prevalence filtering: Fusobacteriaceae, Cellulosilyticaceae, Synergistaceae, CAG.239, Methanobacteriaceae, Muribaculaceae, Massilibacillaceae, Dysgonomonadaceae, Aerococcaceae, GCA.900066905, Dialisteraceae, Christensenellaceae, UMGS1253, UBA7702, UBA660, CAG.272, CAG.274, Pseudomonadaceae, CAG.508, Mycobacteriaceae, Atopobiaceae, Neisseriaceae
+2024-01-25 18:07:01 INFO::Total filtered features with variance filtering: 0
+2024-01-25 18:07:01 INFO::Filtered feature names from variance filtering:
+2024-01-25 18:07:01 INFO::Running selected normalization method: NONE
+2024-01-25 18:07:01 INFO::Applying z-score to standardize continuous metadata
+2024-01-25 18:07:01 INFO::Running selected transform method: LOG
+2024-01-25 18:07:02 INFO::Running selected analysis method: LM
+2024-01-25 18:07:02 INFO::Fitting model to feature number 1, Lactobacillaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 2, Enterobacteriaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 3, Veillonellaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 4, Burkholderiaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 5, Megasphaeraceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 6, Akkermansiaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 7, Lachnospiraceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 8, Tannerellaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 9, Bacteroidaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 10, Anaerovoracaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 11, Barnesiellaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 12, Rikenellaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 13, Acutalibacteraceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 14, Oscillospiraceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 15, Coriobacteriaceae
+2024-01-25 18:07:02 INFO::Fitting model to feature number 16, Coprobacillaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 17, Erysipelotrichaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 18, Ruminococcaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 19, Bifidobacteriaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 20, CAG.74
+2024-01-25 18:07:03 INFO::Fitting model to feature number 21, Marinifilaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 22, Eggerthellaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 23, Streptococcaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 24, Clostridiaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 25, Acidaminococcaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 26, Anaerotignaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 27, Peptostreptococcaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 28, Enterococcaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 29, Actinomycetaceae
+2024-01-25 18:07:03 INFO::Fitting model to feature number 30, Desulfovibrionaceae
+2024-01-25 18:07:04 INFO::Fitting model to feature number 31, Butyricicoccaceae
+2024-01-25 18:07:04 INFO::Fitting model to feature number 32, UBA1381
+2024-01-25 18:07:04 INFO::Fitting model to feature number 33, Monoglobaceae
+2024-01-25 18:07:04 INFO::Fitting model to feature number 34, Turicibacteraceae
+2024-01-25 18:07:04 INFO::Fitting model to feature number 35, Eubacteriaceae
+2024-01-25 18:07:04 INFO::Fitting model to feature number 36, QAMH01
+2024-01-25 18:07:04 INFO::Counting total values for each feature
+2024-01-25 18:07:04 INFO::Writing filtered data to file Maaslin output/tax_fam_sex/features/filtered_data.tsv
+2024-01-25 18:07:04 INFO::Writing filtered, normalized data to file Maaslin output/tax_fam_sex/features/filtered_data_norm.tsv
+2024-01-25 18:07:04 INFO::Writing filtered, normalized, transformed data to file Maaslin output/tax_fam_sex/features/filtered_data_norm_transformed.tsv
+2024-01-25 18:07:04 WARNING::Deleting existing residuals file: Maaslin output/tax_fam_sex/fits/residuals.rds
+2024-01-25 18:07:04 INFO::Writing residuals to file Maaslin output/tax_fam_sex/fits/residuals.rds
+2024-01-25 18:07:04 WARNING::Deleting existing fitted file: Maaslin output/tax_fam_sex/fits/fitted.rds
+2024-01-25 18:07:04 INFO::Writing fitted values to file Maaslin output/tax_fam_sex/fits/fitted.rds
+2024-01-25 18:07:04 WARNING::Deleting existing ranef file: Maaslin output/tax_fam_sex/fits/ranef.rds
+2024-01-25 18:07:04 INFO::Writing extracted random effects to file Maaslin output/tax_fam_sex/fits/ranef.rds
+2024-01-25 18:07:04 INFO::Writing all results to file (ordered by increasing q-values): Maaslin output/tax_fam_sex/all_results.tsv
+2024-01-25 18:07:04 INFO::Writing the significant results (those which are less than or equal to the threshold of 0.050000 ) to file (ordered by increasing q-values): Maaslin output/tax_fam_sex/significant_results.tsv
+2024-01-25 18:07:07 WARNING::Input is a matrix, passing through as.data.frame() .

@@ -14,6 +14,7 @@ library(rJava)
 
 sessionInfo()
 ```
+
 # Data and metadata import and organization
 ```{r data}
 #sample metadata
@@ -33,7 +34,7 @@ samplekey_rich<-read.csv("Data and Metadata/rich_sample_metadata.csv")%>%
 .jgc() #Java Garbage collection to make sure I have enough RAM to read the files
 bch_raw<-read.xlsx2("Data and Metadata/NCSU-01-18VW CDT - 20180327.xlsx","ScaledImpData",startRow=3, check.names=F,colIndex=c(2,14:73))%>%
   slice_tail(n=924)%>%
-  rename("BIOCHEMICAL"=1)%>%
+  dplyr::rename("BIOCHEMICAL"=1)%>%
   rename_with(~str_replace(., " ","_"))%>% #Unify with metagenomics names
   select(BIOCHEMICAL,levels(samplekey$CLIENT.IDENTIFIER))%>%
   mutate_at(2:46,~as.numeric(.))%>%
@@ -89,6 +90,7 @@ bch_dir<-bch_raw%>%
   left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
   select(BIOCHEMICAL, ScaledImpData,prepost)%>%
   group_by(prepost,BIOCHEMICAL)%>%
+  mutate(ScaledImpData=log10(ScaledImpData))%>%
   summarize(mean=mean(ScaledImpData))%>%
   spread(key=prepost,value=mean)%>%
   mutate(dir=factor(ifelse(Pre<Post,"Up after FMT","Down after FMT"),levels=c("Up after FMT","Down after FMT")))%>%
@@ -105,19 +107,7 @@ bch_metadata<-read.xlsx2("Data and Metadata/NCSU-01-18VW CDT - 20180327.xlsx","S
   left_join(aa_labels,by="BIOCHEMICAL")
 
 #metadata for MCBA
-MCBA_dir<-MCBA_raw%>%
-  gather(key="CLIENT.IDENTIFIER",value="value",-BA)%>%
-  mutate(CLIENT.IDENTIFIER=factor(CLIENT.IDENTIFIER,levels=levels(samplekey$CLIENT.IDENTIFIER)))%>%
-  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
-  select(BA, value,prepost)%>%
-  group_by(prepost,BA)%>%
-  summarize(mean=mean(value))%>%
-  spread(key=prepost,value=mean)%>%
-  mutate(dir=factor(ifelse(Pre<Post,"Up after FMT","Down after FMT"),levels=c("Up after FMT","Down after FMT")))%>%
-  select(BA,dir)
-
 MCBA_metadata<-read.csv("Data and Metadata/MCBA_annotation.csv")%>%
-  left_join(.,MCBA_dir,by="BA")%>%
   mutate(Core=factor(Core, levels=c("CA","CDCA","DCA","LCA","aMCA","bMCA","wMCA","HCA","HDCA","UDCA")))
 
 #metadata for taxonomy

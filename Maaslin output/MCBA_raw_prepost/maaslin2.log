@@ -1,0 +1,137 @@
+2023-12-18 16:43:51 INFO::Writing function arguments to log file
+2023-12-18 16:43:51 DEBUG::Function arguments
+2023-12-18 16:43:51 DEBUG::Output folder: Maaslin output/MCBA_raw_prepost
+2023-12-18 16:43:51 DEBUG::Min Abundance: 0.000000
+2023-12-18 16:43:51 DEBUG::Min Prevalence: 0.100000
+2023-12-18 16:43:51 DEBUG::Normalization: NONE
+2023-12-18 16:43:51 DEBUG::Transform: LOG
+2023-12-18 16:43:51 DEBUG::Analysis method: LM
+2023-12-18 16:43:51 DEBUG::Max significance: 0.050000
+2023-12-18 16:43:51 DEBUG::Random effects: SUBJ.ID
+2023-12-18 16:43:51 DEBUG::Fixed effects: prepost
+2023-12-18 16:43:51 DEBUG::Correction method: bonferroni
+2023-12-18 16:43:51 DEBUG::Standardize: TRUE
+2023-12-18 16:43:51 DEBUG::Cores: 1
+2023-12-18 16:43:51 INFO::Verifying options selected are valid
+2023-12-18 16:43:51 INFO::Determining format of input files
+2023-12-18 16:43:51 INFO::Input format is data samples as rows and metadata samples as rows
+2023-12-18 16:43:51 DEBUG::A total of 45 samples were found in both the data and metadata
+2023-12-18 16:43:51 DEBUG::Reordering data/metadata to use same sample ordering
+2023-12-18 16:43:51 INFO::Formula for random effects: expr ~ (1 | SUBJ.ID)
+2023-12-18 16:43:51 INFO::Formula for fixed effects: expr ~  prepost
+2023-12-18 16:43:51 INFO::Filter data based on min abundance and min prevalence
+2023-12-18 16:43:51 INFO::Total samples in data: 45
+2023-12-18 16:43:51 INFO::Min samples required with min abundance for a feature not to be filtered: 4.500000
+2023-12-18 16:43:51 INFO::Total filtered features: 42
+2023-12-18 16:43:51 INFO::Filtered feature names from abundance and prevalence filtering: arg_ca, lys_ca_b, orn_ca_a, orn_ca_b, arg_cdca, asn_cdca, lys_cdca_b, orn_cdca, asn_dca, gln_dca, tyr_hdca, ala_udca, asp_udca, ile_leu_udca, phe_udca, ser_udca, thr_udca, trp_udca, val_udca, cit_udca, arg_a_mca, asp_a_mca, glu_a_mca_a, phe_a_mca_a, phe_a_mca_b, pro_a_mca, ser_a_mca, thr_a_mca, tyr_a_mca, asn_b_mca, asp_b_mca, glu_b_mca, ile_leu_b_mca, phe_b_mca, ser_b_mca, thr_b_mca, trp_b_mca, gln_hca, ile_leu_hca, phe_hca_a, thr_hca, orn_hca
+2023-12-18 16:43:51 INFO::Total filtered features with variance filtering: 0
+2023-12-18 16:43:51 INFO::Filtered feature names from variance filtering:
+2023-12-18 16:43:51 INFO::Running selected normalization method: NONE
+2023-12-18 16:43:51 INFO::Applying z-score to standardize continuous metadata
+2023-12-18 16:43:51 INFO::Running selected transform method: LOG
+2023-12-18 16:43:51 INFO::Running selected analysis method: LM
+2023-12-18 16:43:51 INFO::Fitting model to feature number 1, x12_oxo_lca
+2023-12-18 16:43:51 INFO::Fitting model to feature number 2, x23_ndca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 3, x3_dca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 4, x3_oxo_lca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 5, x7_12_diketo_lca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 6, x7_keto_dca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 7, a_mca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 8, b_mca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 9, ca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 10, cdca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 11, dca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 12, edca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 13, gca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 14, gcdca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 15, gdca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 16, ghca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 17, ghdca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 18, glca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 19, hca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 20, gudca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 21, hdca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 22, iso_lca
+2023-12-18 16:43:52 INFO::Fitting model to feature number 23, lca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 24, nsc_18165
+2023-12-18 16:43:53 INFO::Fitting model to feature number 25, ta_mca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 26, tb_mca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 27, tca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 28, tcdca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 29, tdca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 30, thca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 31, thdca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 32, tlca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 33, tudca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 34, udca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 35, w_mca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 36, ala_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 37, asn_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 38, asp_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 39, glu_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 40, gln_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 41, his_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 42, ile_leu_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 43, lys_ca_a
+2023-12-18 16:43:53 INFO::Fitting model to feature number 44, met_ca
+2023-12-18 16:43:53 INFO::Fitting model to feature number 45, phe_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 46, ser_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 47, thr_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 48, trp_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 49, tyr_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 50, val_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 51, cit_ca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 52, ala_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 53, asp_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 54, glu_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 55, gln_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 56, his_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 57, ile_leu_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 58, lys_cdca_a
+2023-12-18 16:43:54 INFO::Fitting model to feature number 59, met_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 60, phe_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 61, thr_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 62, trp_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 63, tyr_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 64, val_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 65, cit_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 66, ser_cdca
+2023-12-18 16:43:54 INFO::Fitting model to feature number 67, ala_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 68, arg_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 69, asp_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 70, glu_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 71, his_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 72, ile_leu_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 73, lys_dca_a
+2023-12-18 16:43:55 INFO::Fitting model to feature number 74, lys_dca_b
+2023-12-18 16:43:55 INFO::Fitting model to feature number 75, met_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 76, phe_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 77, ser_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 78, thr_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 79, trp_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 80, tyr_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 81, val_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 82, cit_dca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 83, glu_hdca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 84, glu_udca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 85, tyr_udca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 86, glu_a_mca_b
+2023-12-18 16:43:55 INFO::Fitting model to feature number 87, pro_b_mca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 88, lys_hca
+2023-12-18 16:43:55 INFO::Fitting model to feature number 89, phe_hca_b
+2023-12-18 16:43:55 INFO::Fitting model to feature number 90, pro_hca
+2023-12-18 16:43:56 INFO::Fitting model to feature number 91, val_hca
+2023-12-18 16:43:56 INFO::Fitting model to feature number 92, cit_hca
+2023-12-18 16:43:56 INFO::Counting total values for each feature
+2023-12-18 16:43:56 INFO::Writing filtered data to file Maaslin output/MCBA_raw_prepost/features/filtered_data.tsv
+2023-12-18 16:43:56 INFO::Writing filtered, normalized data to file Maaslin output/MCBA_raw_prepost/features/filtered_data_norm.tsv
+2023-12-18 16:43:56 INFO::Writing filtered, normalized, transformed data to file Maaslin output/MCBA_raw_prepost/features/filtered_data_norm_transformed.tsv
+2023-12-18 16:43:56 WARNING::Deleting existing residuals file: Maaslin output/MCBA_raw_prepost/fits/residuals.rds
+2023-12-18 16:43:56 INFO::Writing residuals to file Maaslin output/MCBA_raw_prepost/fits/residuals.rds
+2023-12-18 16:43:56 WARNING::Deleting existing fitted file: Maaslin output/MCBA_raw_prepost/fits/fitted.rds
+2023-12-18 16:43:56 INFO::Writing fitted values to file Maaslin output/MCBA_raw_prepost/fits/fitted.rds
+2023-12-18 16:43:56 WARNING::Deleting existing ranef file: Maaslin output/MCBA_raw_prepost/fits/ranef.rds
+2023-12-18 16:43:56 INFO::Writing extracted random effects to file Maaslin output/MCBA_raw_prepost/fits/ranef.rds
+2023-12-18 16:43:56 INFO::Writing all results to file (ordered by increasing q-values): Maaslin output/MCBA_raw_prepost/all_results.tsv
+2023-12-18 16:43:56 INFO::Writing the significant results (those which are less than or equal to the threshold of 0.050000 ) to file (ordered by increasing q-values): Maaslin output/MCBA_raw_prepost/significant_results.tsv
+2023-12-18 16:43:56 WARNING::Input is a matrix, passing through as.data.frame() .

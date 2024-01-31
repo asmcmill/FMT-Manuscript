@@ -9,7 +9,6 @@ output: html_document
 library(tidyverse)
 library(ggpubr)
 library(pheatmap)
-library(psych)
 library(rstatix)
 
 sessionInfo()
@@ -68,7 +67,7 @@ carn_boxplot_stats<-carn_by_time%>%
   add_xy_position(x="TIME.POINT.2",step.increase = 0.08)
 
 ggplot(carn_by_time, aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
-  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=100/50,dotsize=1.3,stroke=0.5)+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=100/25,dotsize=1,stroke=0.5)+
   geom_boxplot(alpha=0,linewidth=0.2)+
   theme_bw()+
   theme(text=element_text(size=8),
@@ -126,7 +125,7 @@ ggsave("Figures/Carnitine/carn_family_plot.pdf",height=2,width=3.5, units="in")
 ```
 its all enterobacteriaceae, neat
 
-#Carnitine Metabolism Correlation
+#Carnitine Metabolism Correlation with repeated measures
 are some bacterial species present alongside certain species of carnitines?
 ```{r}
 carn_for_cor<-carn%>%
@@ -141,38 +140,51 @@ sig_carn<-bch_metadata%>%
   filter(SUB.PATHWAY=="Fatty Acid Metabolism(Acyl Carnitine)"| str_detect(BIOCHEMICAL,"carnitine|Carnitine"))%>%
   filter(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL)
 
-#Make sure I'm correlating the right things
-identical(rownames(carn_for_cor),rownames(bch_for_cor))
+source("Scripts/rm_corr_all.R")
+rmcor_carn_spec<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           carn_for_cor,
+                          bch_for_cor[sig_carn$BIOCHEMICAL],
+                          "BH")
 
-carn_cor<-corr.test(bch_for_cor%>%select(as.vector(sig_carn$BIOCHEMICAL)),carn_for_cor,method="spearman",adjust="holm")
-
-carn_spec_cor_plot<-left_join(as.data.frame(carn_cor$p.adj)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="p",-BIOCHEMICAL),
-  as.data.frame(carn_cor$r)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
+carn_spec_cor_plot<-rmcor_carn_spec%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
   mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=as.vector(sig_carn$BIOCHEMICAL)))%>%
-  filter(p<=0.05)%>%
-  select(-p)%>%
-  complete(BIOCHEMICAL,fill=list(key="drop",r=0))%>%
-  spread(key=key,value=r,fill=0)%>%
-  column_to_rownames("BIOCHEMICAL")%>%
-  select(-drop)
+  mutate(clade_name=factor(str_replace(clade_name,"Unclassified","Other"), levels=rev(levels(carn_spec_plot$species))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  select(-p,-p.adj)%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+  spread(key=clade_name,value=r,fill=0)%>%
+  mutate(BIOCHEMICAL=str_remove_all(BIOCHEMICAL,"\\*"))%>%
+  column_to_rownames("BIOCHEMICAL")
+
+carn_spec_cor_p<-rmcor_carn_spec%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=as.vector(sig_carn$BIOCHEMICAL)))%>%
+  mutate(clade_name=factor(str_replace(clade_name,"Unclassified","Other"), levels=rev(levels(carn_spec_plot$species))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  mutate(ast=symnum(p.adj,cutpoints=c(0,0.05,1),symbols=c("*","")))%>%
+  select(-r,-p,-p.adj)%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+  spread(key=clade_name,value=ast,fill=0)%>%
+  mutate(BIOCHEMICAL=str_remove_all(BIOCHEMICAL,"\\*"))%>%
+  column_to_rownames("BIOCHEMICAL")
 
 source("Scripts/pheatmap_left.R")
 
 pheatmap(carn_spec_cor_plot,
+         display_numbers=carn_spec_cor_p,
+         number_color="white",
          cluster_rows=F,
          cluster_cols=F,
          fontsize=16,
          annotation_colors=anno_color,
          breaks=seq(-1,1,2/60),
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
+         color=c(rev(colorRampPalette(c("grey88","dodgerblue","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","red", "red3"),bias=1)(30)),
          angle_col=270,
-         width=5.4,
+         width=6,
          height=5,
-         filename=paste0("Figures/Carnitine/bch_vs_carn_spearman.pdf"))
+         filename=paste0("Figures/Carnitine/bch_vs_carn_rmcor_BH_all.pdf"))
 
 ##Reset the pheatmap left overwrite
 detach("package:pheatmap", unload = TRUE)
@@ -193,6 +205,17 @@ nrow(bch_siglist%>%select(BIOCHEMICAL)%>%unique()%>%filter(str_detect(BIOCHEMICA
 #how many significant are in random forest
 nrow(bch_siglist%>%select(BIOCHEMICAL)%>%unique()%>%filter(str_detect(BIOCHEMICAL,"carnitine") & BIOCHEMICAL %in% top_bch_forest))
 
+
+```
+
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("3A"=carn_by_time,
+                "3A Wilcoxon signed rank"=carn_boxplot_stats,
+                "3B"=carn_spec_plot,
+                "3C"=carn_spec_cor_plot,
+                "3C linear model"=rmcor_carn_spec),
+           "Excel Exports/Figure 3.xlsx")
 
 ```
 

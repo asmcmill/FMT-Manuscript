@@ -12,6 +12,7 @@ library(ggpubr)
 library(muscle)
 library(curl)
 library(rstatix)
+library(writexl)
 
 sessionInfo()
 ```
@@ -56,8 +57,7 @@ bae_anno<-bae_raw%>%
   gather(key="CLIENT.IDENTIFIER",value="CPM",-annotation)%>%
   group_by(annotation,CLIENT.IDENTIFIER)%>%
   summarize(sum=sum(CPM))%>%
-  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
-  mutate(annotation=fct_inorder(annotation))
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")
   
 bae_boxplot_stats<-bae_anno%>%
   ungroup()%>%
@@ -71,8 +71,8 @@ bae_boxplot_stats<-bae_anno%>%
                        paired=T)%>%
   add_xy_position(x="TIME.POINT.2")
 
-ggplot(data=bae_anno,aes(x=TIME.POINT.2,y=sum,color=TIME.POINT.2))+
-  geom_jitter(width=.2)+
+ggplot(data=bae_anno,aes(x=TIME.POINT.2,y=sum))+
+  geom_jitter(aes(fill=TIME.POINT.2),shape=21,width=.2)+
   geom_boxplot(alpha=0,color="black")+
   facet_wrap(~annotation, scales="free_y",shrink=T,nrow=5)+
   theme_bw()+
@@ -86,7 +86,7 @@ ggplot(data=bae_anno,aes(x=TIME.POINT.2,y=sum,color=TIME.POINT.2))+
        x= "",
        fill="Time Post FMT")+
   scale_y_continuous(expand=c(0,0,.2,0))+
-  scale_color_manual(values=anno_color$TIME.POINT.2)+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)+
   stat_pvalue_manual(filter(bae_boxplot_stats,p.adj<0.05), 
                      label = "p.adj.signif", 
                      step.increase=.2,
@@ -106,7 +106,7 @@ bae_species<-genes_raw%>%
    filter(desc %in% genelist$desc)%>%
   separate(taxa,into=c("genus","species"),sep = "\\.",fill="right")%>%
   mutate(genus=str_remove(genus,"g\\_\\_"))%>%
-  left_join(.,tax_metadata%>%select(-species),by="genus")%>%
+  left_join(.,tax_metadata%>%select(-species)%>%unique(),by="genus")%>%
   select(Uniref,phylum,species,everything())%>%
   left_join(.,genelist, by="desc")%>%
   select(annotation,phylum,family,genus,species,samplekey$CLIENT.IDENTIFIER)%>%
@@ -124,7 +124,8 @@ bae_species<-genes_raw%>%
                           genus=="Eubacterium"~"Eubacteriaceae",
                           genus %in% c("Subdoligranulum","Ruminococcus")~"Oscillospiraceae"))%>%
   mutate(family=if_else(is.na(family),"Other",family))%>%
-  mutate(family=factor(family,levels=names(anno_color$familyplot)))
+  mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
+  unique()
 
 ggplot(bae_species,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
   geom_bar(stat="identity")+
@@ -147,4 +148,14 @@ ggplot(bae_species,aes(x=CLIENT.IDENTIFIER,y=CPM, fill=family))+
 ggsave("Figures/Supplementals/Bile acid genes family plot.pdf",height=5.5,width=8.5,units="in") 
 
 ```
+
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("S7A"=bae_anno,
+                "S7A Wilcoxon signed rank"=bae_boxplot_stats,
+                "S7B"=bae_species),
+           "Excel Exports/Figure S7.xlsx")
+
+```
+
 

@@ -9,9 +9,9 @@ output: html_document
 library(tidyverse)
 library(pheatmap)
 library(randomForest)
-library(psych)
 library(ggtext)
 library(janitor)
+library(writexl)
 
 sessionInfo()
 ```
@@ -22,6 +22,7 @@ samplekey<-readRDS("Dataframes/samplekey.rds")
 bch_raw<-readRDS("Dataframes/bch_raw.rds")
 bch_metadata<-readRDS("Dataframes/bch_metadata.rds")
 bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+fam_siglist<-readRDS("Dataframes/Stats/fam_siglist.rds")
 tax_raw<-readRDS("Dataframes/tax_raw.rds")
 fam_for_cor<-readRDS("Dataframes/fam_for_cor.rds")
 bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
@@ -52,7 +53,8 @@ AA_raw<-bch_raw%>%
                           "indoleacetate", # oxidative Tryptophan
                           "phenylacetate", # oxidative phenylalanine
                           "4-imidazoleacetate", #oxidative histidine
-                          "3-phenylpropionate (hydrocinnamate)"))##reductive phenylalanine
+                          "3-phenylpropionate (hydrocinnamate)"##reductive phenylalanine
+                          ))
 
 AA_raw_sig<-bch_raw%>%
   left_join(.,bch_metadata,by="BIOCHEMICAL")%>%
@@ -86,7 +88,7 @@ AA_forest_plot<-AA_forest$importance%>%
   as.data.frame()%>%
   rownames_to_column("biochem")%>%
   left_join(.,bch_metadata%>%
-              select(BIOCHEMICAL,AA_group,dir)%>%
+              select(BIOCHEMICAL,AA_group_detail,dir)%>%
               mutate(biochem=janitor::make_clean_names(BIOCHEMICAL)),by="biochem")%>%
   filter(MeanDecreaseAccuracy>0)%>%
   arrange(-MeanDecreaseAccuracy)%>%
@@ -94,10 +96,11 @@ AA_forest_plot<-AA_forest$importance%>%
   mutate(plotnames=str_remove(BIOCHEMICAL,"\\*"))%>%
   mutate(plotnames=if_else(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL,paste("*", plotnames),plotnames))%>%
   mutate(plotnames=fct_inorder(plotnames))%>%
-  mutate(BIOCHEMICAL=fct_inorder(BIOCHEMICAL))
+  mutate(BIOCHEMICAL=fct_inorder(BIOCHEMICAL))%>%
+  mutate(AA_group_detail=factor(AA_group_detail,levels=names(anno_color$AA_group)))
 
 #plot
-ggplot(data=AA_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=AA_group))+
+ggplot(data=AA_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=AA_group_detail))+
   geom_point(shape=21, size=2)+
   scale_fill_manual(values=anno_color$AA_group)+
   coord_flip()+
@@ -113,7 +116,7 @@ ggplot(data=AA_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=AA_grou
         plot.margin = unit(c(0,0.25,0,0),"in"))+
   guides(fill=guide_legend(nrow=1))
 
-ggsave("Figures/Amino Acids/Amino Acid_forest_sig_all.pdf", height=3.3, width=3.5, units="in")
+ggsave("Figures/Amino Acids/Amino Acid_forest_sig_all_new.pdf", height=3.3, width=3.5, units="in")
 
 ##Error Rate
 AA_forest
@@ -195,30 +198,24 @@ pathway_aa_spec<-pathway_raw%>%
   mutate(family=factor(family,levels=names(anno_color$familyplot)))%>%
   droplevels()
 
-amino_names<-c(#non polar
-               "glycine"="Glycine",
+amino_names<-c("glycine"="Glycine",
                "D-alanine"="D-alanine",
-               "L-isoleucine"="Isoleucine",
-               "L-leucine"="Leucine",
-               "L-methionine"="Methionine",
-               #aromatic
-               "L-phenylalanine"="Phenylalanine",
-               "L-tryptophan"="Tryptophan",
-               "L-tyrosine"="Tyrosine",
-               #Polar
+               "L-arginine"="Arginine",
                "L-asparagine"="Asparagine",
                "L-cysteine"="Cysteine",
+               "L-glutamate"="Glutamate",
+               "L-histidine"="Histidine",
+               "L-homocysteine"="Homocysteine",
+               "L-isoleucine"="Isoleucine",
+               "L-leucine"="Leucine",
+               "L-lysine"="Lysine",
+               "L-methionine"="Methionine",
+               "L-phenylalanine"="Phenylalanine",
                "L-proline"="Proline",
                "L-serine"="Serine",
                "L-threonine"="Threonine",
-               #neg charge
-               "L-glutamate"="Glutamate",
-               #pos charge
-               "L-arginine"="Arginine",
-               "L-histidine"="Histidine",
-               "L-lysine"="Lysine",
-               #Other
-               "L-homocysteine"="Homocysteine",
+               "L-tryptophan"="Tryptophan",
+               "L-tyrosine"="Tyrosine",
                "S-adenosyl-L-methionine"="S-adenosyl-L-methionine"
                )
 
@@ -246,23 +243,26 @@ ggplot(pathway_aa_spec%>%
 ggsave("Figures/Amino Acids/amino acid biosynthesis_familyplot.pdf",height=5,width=8.5,units="in")
 ```
 
-# Correlate with bacterial families
+# Correlate with bacterial families with repeated measures
 ```{r}
-AA_cor<-corr.test(bch_for_cor%>%select(all_of(top_AA_forest)),fam_for_cor,method="spearman",adjust="holm")
+source("Scripts/rm_corr_all.R")
 
-AA_fam_cor_plot<-left_join(as.data.frame(AA_cor$p.adj)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="p",-BIOCHEMICAL),
-  as.data.frame(AA_cor$r)%>%
-  rownames_to_column("BIOCHEMICAL")%>%
-  gather(key="key",value="r",-BIOCHEMICAL),by=c("BIOCHEMICAL","key"))%>%
-  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(top_AA_forest)))%>%
-  filter(p<=0.05)%>%
-  select(-p)%>%
-  complete(BIOCHEMICAL,fill=list(key="drop",r=0))%>%
-  spread(key=key,value=r,fill=0)%>%
-  column_to_rownames("BIOCHEMICAL")%>%
-  select(-drop)
+rmcor_AA_fam<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           fam_for_cor[levels(fam_siglist$clade_name)],
+                           bch_for_cor[top_AA_forest],
+                          "BH")
+
+AA_fam_cor_plot<-rmcor_AA_fam%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(as.vector(top_AA_forest))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  select(-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+   mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  spread(key=clade_name,value=r,fill=0)%>%
+  column_to_rownames("BIOCHEMICAL")
 
 tax_anno<-tax_metadata%>%
   filter(!is.na(family))%>%
@@ -273,23 +273,38 @@ tax_anno<-tax_metadata%>%
   mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
   column_to_rownames("family")
 
+AA_fam_cor_p<-rmcor_AA_fam%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(as.vector(top_AA_forest))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  mutate(ast=symnum(p.adj,cutpoints=c(0,0.05,1),symbols=c("*","")))%>%
+  select(-r,-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",ast=""))%>%
+  spread(key=clade_name,value=ast,fill="")%>%
+  column_to_rownames("BIOCHEMICAL")
+
 pheatmap(AA_fam_cor_plot,
          annotation_col = tax_anno,
+         display_numbers=AA_fam_cor_p,
+         number_color="white",
          cluster_rows=F,
          cluster_cols=T,
+         clustering_distance_cols = "correlation",
          breaks=seq(-1,1,2/60),
-         color=c(rev(colorRampPalette(c("grey88","white","dodgerblue3"),bias=2)(30)),colorRampPalette(c("grey88","white", "red3"),bias=2)(30)),
+         color=c(rev(colorRampPalette(c("grey88","dodgerblue","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","red", "red3"),bias=1)(30)),
          border_color="grey20",
          cellheight = 12,
          cellwidth = 20,
          fontsize = 14,
          drop_levels = T,
-         filename=paste0("Figures/Amino Acids/AA_vs_fam_spearman.pdf"),
-         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(c(tax_anno$familyplot,pathway_aa_spec$family))]),
-         width=14,
+         filename=paste0("Figures/Amino Acids/AA_vs_fam_rmcor_BH_all_new.pdf"),
+         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(tax_anno$familyplot)]),
+         width=20,
          height=14)
 
-saveRDS(as.data.frame(AA_cor$p.adj),"Dataframes/Stats/AA vs Family correlation t test holm.rds")
+saveRDS(rmcor_AA_fam,"Dataframes/Stats/AA vs Family correlation rmcor.rds")
 ```
 
 # Random Forest all significant amino acids
@@ -323,14 +338,14 @@ AA_forest_plot_sig<-AA_forest_sig$importance%>%
   arrange(-MeanDecreaseAccuracy)%>%
   arrange(dir,MeanDecreaseAccuracy)%>%
   mutate(plotnames=str_remove(BIOCHEMICAL,"\\*"))%>%
-  mutate(plotnames=if_else(BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL,paste("*", plotnames),plotnames))%>%
   mutate(plotnames=fct_inorder(plotnames))%>%
-  mutate(BIOCHEMICAL=fct_inorder(BIOCHEMICAL))
+  mutate(BIOCHEMICAL=fct_inorder(BIOCHEMICAL))%>%
+  mutate(color=if_else(SUB.PATHWAY=="Dipeptide","Dipeptide","Amino Acid"))
 
 #plot
-ggplot(data=AA_forest_plot_sig, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=SUB.PATHWAY))+
+ggplot(data=AA_forest_plot_sig, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=color))+
   geom_point(shape=21, size=2)+
-  #scale_fill_manual(values=anno_color$AA_group)+
+  scale_fill_manual(values=c("deepskyblue2","firebrick4"))+
   coord_flip()+
   theme_bw()+
   labs(fill="", y="Mean Decrease Accuracy",x="")+
@@ -344,7 +359,7 @@ ggplot(data=AA_forest_plot_sig, aes(y=MeanDecreaseAccuracy,x=plotnames, fill=SUB
         plot.margin = unit(c(0,0.25,0,0),"in"))+
   guides(fill=guide_legend(ncol=3))
 #3.3
-ggsave("Figures/Supplementals/Amino Acid_forest_sig_all.pdf", height=5, width=3.5, units="in")
+ggsave("Figures/Supplementals/Amino Acid_forest_sig_all.pdf", height=4.6, width=3.5, units="in")
 
 ##Error Rate
 AA_forest_sig
@@ -353,7 +368,7 @@ AA_forest_sig
 AA_forest_plot_sig$BIOCHEMICAL[!AA_forest_plot$BIOCHEMICAL %in% bch_siglist$BIOCHEMICAL]
 
 #make list for filtering
-top_AA_forest_sig<-as.vector(AA_forest_plot$BIOCHEMICAL)
+top_AA_forest_sig<-as.vector(AA_forest_plot_sig$BIOCHEMICAL)
 
 ## for writing
 AA_forest_plot_sig%>%group_by(dir)%>%summarize(count=n())
@@ -369,8 +384,8 @@ AA_by_time_hm_sig<-AA_long_sig%>%
   summarize(mean=mean(ScaledImpData))%>% #Mean of timepoints
   spread(key='TIME.POINT.2',value="mean")%>%
   left_join(.,bch_metadata,by="BIOCHEMICAL")%>%
-  filter(BIOCHEMICAL %in% top_AA_forest)%>%
-  mutate(BIOCHEMICAL=factor(BIOCHEMICAL, levels=rev(top_AA_forest)))%>%
+  filter(BIOCHEMICAL %in% top_AA_forest_sig)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL, levels=rev(top_AA_forest_sig)))%>%
   arrange(BIOCHEMICAL)%>%
   column_to_rownames("BIOCHEMICAL")
 
@@ -386,6 +401,87 @@ pheatmap(AA_by_time_hm_sig[1:4],
          width=14,
          height=14
 )
+
+```
+
+# Correlate with bacterial families with repeated measures for significant amino acids
+```{r}
+source("Scripts/rm_corr_all.R")
+
+rmcor_AA_fam_sig<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           fam_for_cor[levels(fam_siglist$clade_name)],
+                           bch_for_cor[top_AA_forest_sig],
+                          "BH")
+
+AA_fam_cor_plot_sig<-rmcor_AA_fam_sig%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(as.vector(top_AA_forest_sig))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  select(-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",r=0))%>%
+   mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  spread(key=clade_name,value=r,fill=0)%>%
+  column_to_rownames("BIOCHEMICAL")
+
+tax_anno_sig<-tax_metadata%>%
+  filter(!is.na(family))%>%
+  select(family)%>%
+  unique()%>%
+  remove_rownames()%>%
+  filter(family %in% colnames(AA_fam_cor_plot_sig))%>%
+  mutate(familyplot=factor(family,levels=names(anno_color$familyplot)))%>%
+  column_to_rownames("family")
+
+AA_fam_cor_p_sig<-rmcor_AA_fam_sig%>%
+  dplyr::rename("BIOCHEMICAL"=df2,"clade_name"=df1)%>%
+  mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=rev(as.vector(top_AA_forest_sig))))%>%
+  filter(clade_name %in% (filter(.,p.adj<=0.05))$clade_name)%>%
+  mutate(ast=symnum(p.adj,cutpoints=c(0,0.05,1),symbols=c("*","")))%>%
+  select(-r,-p,-p.adj)%>%
+  group_by(clade_name)%>%
+  mutate(clade_name=factor(clade_name,levels=names(anno_color$familyplot)))%>%
+  complete(BIOCHEMICAL,fill=list(clade_name="drop",ast=""))%>%
+  spread(key=clade_name,value=ast,fill="")%>%
+  column_to_rownames("BIOCHEMICAL")
+
+pheatmap(AA_fam_cor_plot_sig,
+         annotation_col = tax_anno_sig,
+         display_numbers=AA_fam_cor_p_sig,
+         number_color="white",
+         cluster_rows=F,
+         cluster_cols=T,
+         clustering_distance_cols = "correlation",
+         breaks=seq(-1,1,2/60),
+         color=c(rev(colorRampPalette(c("grey88","dodgerblue","dodgerblue3"),bias=1)(30)),colorRampPalette(c("grey88","red", "red3"),bias=1)(30)),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 20,
+         fontsize = 14,
+         drop_levels = T,
+         filename=paste0("Figures/Supplementals/AA_vs_fam_rmcor_sig.pdf"),
+         annotation_colors = list(familyplot=anno_color$familyplot[names(anno_color$familyplot) %in% unique(tax_anno_sig$familyplot)]),
+         width=20,
+         height=14)
+
+```
+
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("4A"=AA_forest_plot,
+                "4A linear mixed model"=bch_siglist,
+                "4B"=AA_by_time_hm,
+                "4C"=AA_fam_cor_plot,
+                "4C linear model"=rmcor_AA_fam,
+                "4D"=pathway_aa_spec),
+           "Excel Exports/Figure 4.xlsx")
+
+write_xlsx(list("S2A"=AA_forest_plot_sig,
+                "S2B"=AA_by_time_hm_sig,
+                "S2C"=AA_fam_cor_plot_sig,
+                "S2C linear model"=rmcor_AA_fam_sig),
+           "Excel Exports/Figure S2.xlsx")
 
 ```
 

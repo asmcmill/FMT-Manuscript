@@ -4,13 +4,14 @@ author: "Sam McMillan"
 date: "2023-12-06"
 output: html_document
 ---
-# Ima be honest with you this ones a mess. Thats what the supp is for, right?
+
 ```{r setup, require=T}
 library(tidyverse)
 library(janitor)
 library(pheatmap)
 library(rstatix)
 library(ggpubr)
+library(writexl)
 
 sessionInfo()
 ```
@@ -351,26 +352,28 @@ stickland_stats<-stickland_by_time%>%
                        p.adjust.method="holm",
                        ref.group = "Pre",
                        paired=T)%>%
-  add_xy_position(x="TIME.POINT.2")%>%
-  mutate(y.position=y.position-60)
+  add_xy_position(x="TIME.POINT.2")
 
-ggplot(stickland_by_time,aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
-  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=475/50,dotsize=1,stroke=0.5)+
+ggplot(stickland_by_time, aes(x=TIME.POINT.2,y=sum,group=TIME.POINT.2))+
+  geom_dotplot(aes(fill=TIME.POINT.2),binaxis="y",stackdir="center",binwidth=475/50,dotsize=2,stroke=0.5)+
   geom_boxplot(alpha=0,linewidth=0.3)+
   theme_bw()+
   facet_wrap(~aa,ncol=3)+
   theme(text=element_text(size=8),
         legend.position="none",
+        strip.text=element_text(size=6),
+        strip.background=element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x= element_blank())+
   labs(y = "Total Stickland Gene Abundance (CPM)",
        x= "",
        fill="Time Post FMT")+
   scale_fill_manual(values=anno_color$TIME.POINT.2)+
+  scale_y_continuous(expand=c(0,1),limits=c(0,600))+
   stat_pvalue_manual(filter(stickland_stats,p.adj<0.05), 
                      label = "p.adj.signif",
                      tip.length=0.01,
-                     step.increase=0.05,
+                     step.increase=0,
                      step.group.by="aa",
                      inherit.aes=F)
 
@@ -421,15 +424,119 @@ ggplot(genes_stickland_spec,
   facet_wrap(~aa,ncol=3,scales="free_y")+
   theme(axis.text.x=element_text(angle=-90),
         text=element_text(size=6),
-        legend.position="bottom",
+        legend.position="right",
         strip.text=element_text(size=6),
         strip.background=element_blank(),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x= element_blank(),
-        axis.text.x.bottom = element_blank())+
+        axis.text.x.bottom = element_blank(),
+        legend.key.size = unit(12,"points"))+
   scale_fill_manual(values = anno_color$familyplot)+
+  guides(fill=guide_legend(ncol=1))+
+  scale_y_continuous(expand=c(0,0,.4,0))+
   labs(x="",y="Gene Abundance (CPM)",fill="Family")
 
-ggsave("Figures/Supplementals/Stickland_familyplot.pdf",height=6,width=6,units="in")
+ggsave("Figures/Supplementals/Stickland_familyplot.pdf",height=5,width=7.25,units="in")
 ```
+
+# Pathway Random Forest
+```{r}
+#Random Forest
+set.seed(102309)
+pathway_forest<-pathway_raw%>%
+  filter(pathway %in% levels(pathway_siglist$pathway)& !pathway %in% c("UNMAPPED","UNINTEGRATED"))%>%
+  unique()%>%
+  column_to_rownames("pathway")%>%
+  t()%>%
+  as.data.frame()%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  left_join(samplekey,., by="CLIENT.IDENTIFIER")%>%
+  select(-CLIENT.IDENTIFIER,-TIME.POINT.2,-SUBJ.ID)%>%
+  clean_names()%>%
+  randomForest(prepost ~ .,data=., proximity=T, importance=TRUE, ntree=1000)
+
+##OOB Error rate: 8.89%
+
+#Prepare to Plot
+pathway_forest_plot<-pathway_forest$importance%>%
+  as.data.frame()%>%
+  rownames_to_column("feature")%>%
+  left_join(.,pathway_siglist%>%select(feature,pathway,dir),by="feature")%>%
+  unique()%>%
+  filter(MeanDecreaseAccuracy>0)%>%
+  arrange(-MeanDecreaseAccuracy)%>%
+  group_by(dir)%>%
+  mutate(count=1:n())%>%
+  arrange(dir,MeanDecreaseAccuracy)%>%
+  mutate(pathway_ori=pathway)%>%
+  mutate(pathway=str_replace_all(pathway,"_"," "))%>%
+  mutate(pathway=str_remove_all(pathway,"\\."))%>%
+  separate(pathway, into=c("category","pathway","details"),sep="\\;",fill="right")%>%
+  mutate(pathway=if_else(is.na(pathway),category,pathway))%>%
+  mutate(details=if_else(is.na(details),pathway,details))%>%
+  filter(count<=100)%>%
+  group_by(pathway)%>%
+  mutate(pcount=n())%>%
+  mutate(plotname=if_else(pcount>1,details,pathway))%>%
+  mutate(plotname=factor(plotname,levels=unique(.$plotname)))%>%
+  mutate(category=factor(if_else(category %in% names(anno_color$GENE.PATHWAY),category,"Other"),levels=names(anno_color$GENE.PATHWAY)))
+  
+#plot
+ggplot(data=pathway_forest_plot, aes(y=MeanDecreaseAccuracy,x=plotname,fill=category))+
+  geom_point(shape=21, size=2)+
+  scale_fill_manual(values=anno_color$GENE.PATHWAY)+
+  coord_flip()+
+  theme_bw()+
+  labs(y="Mean Decrease Accuracy               ",x="",fill="")+
+  theme(axis.text.y=element_text(size=6),
+        axis.text.x=element_text(size=6),
+        axis.title.y=element_text(size=8),
+        legend.position="top",
+        legend.text = element_text(size=6),
+        legend.key.size = unit(c(0.1,0.2),"in"),
+        legend.box.margin=unit(c(0,4.5,-.1,0),"in"))+
+  guides(fill=guide_legend(ncol=3))
+
+ggsave(paste0("Figures/Supplementals/pathway_forest.pdf"), height=10, width=7.5, units="in")
+
+hm_pathway<-pathway_raw%>%
+  filter(pathway %in% pathway_forest_plot$pathway_ori)%>%
+  gather(key="CLIENT.IDENTIFIER",value="count",-pathway)%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  group_by(TIME.POINT.2,pathway)%>%
+  summarize(mean=log10(mean(count)+1))%>%
+  spread(key=TIME.POINT.2,value=mean)%>%
+  left_join(.,pathway_forest_plot%>%select(pathway_ori,plotname),by=c("pathway"="pathway_ori"))%>%
+  mutate(plotname=fct_rev(plotname))%>%
+  arrange(plotname)%>%
+  column_to_rownames("plotname")
+
+pheatmap(hm_pathway[2:5],
+         cluster_cols=F,
+         cluster_rows=F,
+         color=colorRampPalette(c("white","grey","black"),bias=1.5)(50),
+         border_color="grey20",
+         cellheight = 12,
+         cellwidth = 50,
+         fontsize = 14,
+         filename="Figures/Supplementals/pathway_hm_mean.pdf",
+         width=20,
+         height=22
+)
+```
+#Data export for Mendeley
+```{r data export}
+write_xlsx(list("S3A"=stickland_by_time,
+                "S3A Wilcoxon signed rank"=stickland_stats,
+                "S3B"=genes_stickland_spec),
+           "Excel Exports/Figure S3.xlsx")
+
+write_xlsx(list("S4A"=pathway_forest_plot,
+                "S4A linear mixed model"=pathway_siglist,
+                "S4B"=hm_pathway),
+           "Excel Exports/Figure S4.xlsx")
+
+
+```
+
 
