@@ -1,0 +1,178 @@
+---
+title: "Reviewer Comments"
+author: "Sam McMillan"
+date: "2024-06-04"
+output: html_document
+---
+
+```{r setup, require=T, include=T}
+library(tidyverse)
+library(pheatmap)
+library(randomForest)
+library(ggtext)
+library(janitor)
+library(writexl)
+library(Maaslin2)
+
+sessionInfo()
+```
+
+#Get Dataframes
+```{r}
+samplekey<-readRDS("Dataframes/samplekey.rds")%>%
+  left_join(.,read.csv("Data and Metadata/abx pre metadata.csv"),by="SUBJ.ID")
+fam_for_cor<-readRDS("Dataframes/fam_for_cor.rds")
+bch_for_cor<-readRDS("Dataframes/bch_for_cor.rds")
+MCBA_for_cor<-readRDS("Dataframes/MCBA_for_cor.rds")
+top_bch_forest<-readRDS("Dataframes/top_bch_forest.rds")
+
+
+bch_raw<-readRDS("Dataframes/bch_raw.rds")
+MCBA_raw<-readRDS("Dataframes/MCBA_raw.rds")
+tax_raw<-readRDS("Dataframes/tax_raw.rds")
+MCBA_forest<-readRDS("Dataframes/MCBA order.rds")
+bch_siglist<-readRDS("Dataframes/Stats/bch_siglist.rds")
+MCBA_siglist<-readRDS("Dataframes/Stats/MCBA_siglist.rds")
+pathway_siglist<-readRDS("Dataframes/Stats/pathway_siglist.rds")
+fam_siglist<-readRDS("Dataframes/Stats/fam_siglist.rds")
+spec_siglist<-readRDS("Dataframes/Stats/spec_siglist.rds")
+
+
+source("Scripts/Color codes.R")
+```
+
+```{r}
+source("Scripts/rm_corr_all.R")
+
+rmcor_BCH_FAM<-rmcorr_test(samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+                           "SUBJ.ID",
+                           bch_for_cor[top_bch_forest],
+                          fam_for_cor[levels(fam_siglist$clade_name)],
+                          "BH")
+
+bch_vs_fam_top<-rmcor_BCH_FAM%>%
+              arrange(r)%>%
+              mutate(rank=1:n())%>%
+              filter(rank<=10|rank>max(rank-10))
+
+bchvfam_plotdata<-bch_for_cor[top_bch_forest]%>%
+  rownames_to_column("CLIENT.IDENTIFIER")%>%
+  gather(key="BIOCHEMICAL",value="value",-CLIENT.IDENTIFIER)%>%
+  filter(str_detect(BIOCHEMICAL,"carnitine"))%>%
+  left_join(.,samplekey,by="CLIENT.IDENTIFIER")%>%
+  left_join(.,fam_for_cor["Enterobacteriaceae"]%>%rownames_to_column("CLIENT.IDENTIFIER"),by="CLIENT.IDENTIFIER")
+
+ggplot(data=bchvfam_plotdata,aes(x=log10(value),y=Enterobacteriaceae,fill=TIME.POINT.2,group=SUBJ.ID))+
+  geom_line(color="black",alpha=0.1)+
+  geom_point(shape=21, size=2)+
+  facet_wrap(~BIOCHEMICAL,scales="free",ncol=2)+
+  theme_bw()+
+  theme(strip.background=element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor= element_blank())+
+  labs(x="log10(Metabolite Abundance)",fill="", y="Relative Abundance Enterobacteriaceae")+
+  scale_fill_manual(values=anno_color$TIME.POINT.2)
+
+ggsave("Revision Outputs/Entero_vs_acylcarn_scatter.pdf", height=4, width=6, units="in")
+
+```
+# Reviewers were concerned about the impact of antibiotic treatment pre and post FMT
+I put together all of the data we had on this. A lot is unknown
+
+# Linear Modeling 
+Data is already normalized: Median set to 1 for metabolites,Relative abundance for taxonomy, Counts per million for genes
+Linear modelling is great because we have paired longitudinal samples (SUBJ.ID), but we also want to look at pre vs post (multiple post per pre). 
+```{r linmod, message=F,warning=F}
+tax_fam<-tax_raw%>%
+        filter(str_detect(clade_name,"\\;f\\_\\_")&!str_detect(clade_name,"\\;g\\_\\_"))%>%
+        mutate(clade_name=str_extract(clade_name, "\\;f\\_\\_.*"))%>%
+        mutate(clade_name=str_remove(clade_name,"\\;f\\_\\_"))
+
+tax_spec<-tax_raw%>%
+        filter(str_detect(clade_name,"\\;s\\_\\_"))
+
+#Not species level
+for (d in c("bch_raw","MCBA_raw","tax_fam","tax_spec")){
+  
+  data<-get(d)%>%
+               dplyr::rename("feature"=1)%>%
+               filter(!str_detect(feature, "\\|"))%>%
+               mutate(feature=make_clean_names(feature))%>%
+               column_to_rownames("feature")%>%
+               mutate_all(~as.numeric(.))%>%
+               t()
+  
+    dir.create(paste0("Maaslin output/",d,"_prepost_abx"))
+    dir.create(paste0("Maaslin output/",d,"_TIME.POINT.2_abx"))
+  
+    capture.output(Maaslin2(input_data = data,
+             input_metadata = samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+             output = paste0("Maaslin output/",d,"_prepost_abx"),
+             fixed_effects = c("prepost","pre_Abx"), 
+             random_effects = "SUBJ.ID",
+             reference=c("prepost,Pre","pre_Abx,Yes"),
+             plot_scatter=F,
+             plot_heatmap = F,
+             normalization="NONE",
+             transform="LOG",
+             analysis_method ="LM",
+             correction="bonferroni",
+             max_significance = 0.05), file=paste0("Maaslin output/",d,"_prepost_abx/console_output.txt")) 
+    
+    capture.output(Maaslin2(input_data = data,
+             input_metadata = samplekey%>%column_to_rownames("CLIENT.IDENTIFIER"),
+             output = paste0("Maaslin output/",d,"_TIME.POINT.2_abx"),
+             fixed_effects = c("TIME.POINT.2","pre_Abx"), 
+             random_effects = "SUBJ.ID",
+             reference=c("TIME.POINT.2,Pre","pre_Abx,Yes"),
+             plot_scatter=F,
+             plot_heatmap = F,
+             normalization="NONE",
+             transform="LOG",
+             analysis_method ="LM",
+             correction="bonferroni",
+             max_significance = 0.05), file=paste0("Maaslin output/",d,"_TIME.POINT.2_abx/console_output.txt"))  
+}
+```
+
+# Organize lists of significant metabolites/families
+Put the pre vs post comparisons with the pre vs each time point comparisons and save them for later reference
+```{r siglists}
+bch_siglist_abx<-rbind(read_tsv("Maaslin output/bch_raw_prepost_abx/all_results.tsv"),
+                   read_tsv("Maaslin output/bch_raw_TIME.POINT.2_abx/all_results.tsv"))%>%
+            left_join(.,bch_raw%>%select(BIOCHEMICAL)%>%mutate(feature=make_clean_names(BIOCHEMICAL)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(BIOCHEMICAL=factor(BIOCHEMICAL,levels=unique(.$BIOCHEMICAL)))
+
+MCBA_siglist_abx<-rbind(read_tsv("Maaslin output/MCBA_raw_prepost_abx/all_results.tsv"),
+                   read_tsv("Maaslin output/MCBA_raw_TIME.POINT.2_abx/all_results.tsv"))%>%
+            left_join(.,MCBA_raw%>%select(BA)%>%mutate(feature=make_clean_names(BA)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(BA=factor(BA,levels=unique(.$BA)))
+
+fam_siglist_abx<-rbind(read_tsv("Maaslin output/tax_fam_prepost_abx/all_results.tsv"),
+                   read_tsv("Maaslin output/tax_fam_TIME.POINT.2_abx/all_results.tsv"))%>%
+            left_join(.,tax_fam%>%select(clade_name)%>%mutate(feature=make_clean_names(clade_name)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(clade_name=factor(clade_name,levels=unique(.$clade_name)))
+
+spec_siglist_abx<-rbind(read_tsv("Maaslin output/tax_spec_prepost_abx/all_results.tsv"),
+                   read_tsv("Maaslin output/tax_spec_TIME.POINT.2_abx/all_results.tsv"))%>%
+            left_join(.,tax_spec%>%select(clade_name)%>%mutate(feature=make_clean_names(clade_name)), by="feature")%>%
+            filter(qval<=0.05)%>%
+            mutate(dir=case_when(coef>0~"Up",coef<0~"down"))%>%
+            mutate(clade_name=factor(clade_name,levels=unique(.$clade_name)))
+
+```
+# Check for changes
+```{r}
+
+bch_check<-filter(bch_siglist_abx,BIOCHEMICAL %in% top_bch_forest)
+
+bch_missing<-top_bch_forest[-which(top_bch_forest %in% filter(bch_siglist_abx,BIOCHEMICAL %in% top_bch_forest)$BIOCHEMICAL)]
+
+```
+

@@ -110,10 +110,16 @@ ggplot(data=MCBA_forest_plot, aes(y=MeanDecreaseAccuracy,x=BA,fill=Core))+
 ggsave("Figures/MCBA/MCBA_forest_sig.pdf", height=4.2, width=2.5, units="in")
 
 # For writing
+#MCBAs with no signal
 MCBA_raw%>%filter(rowSums(.[2:46]==0)==45)%>%select(BA)
 
+#number of singificant
 length(unique(MCBA_siglist$BA))
 
+#Significant MCBAs not in RFA
+MCBA_siglist%>%filter(!BA %in% MCBA_forest_plot$BA)
+
+#number of important
 nrow(MCBA_forest$importance%>%
   as.data.frame()%>%
   rownames_to_column("ba")%>%
@@ -121,19 +127,21 @@ nrow(MCBA_forest$importance%>%
   left_join(MCBA_dir,by="BA")%>%
   arrange(-MeanDecreaseAccuracy)%>%
   group_by(dir)%>%
+  unique()%>%
   mutate(count=1:n())%>%
   arrange(dir,MeanDecreaseAccuracy)%>%
   filter(MeanDecreaseAccuracy>0))
 
+#number up and down total
 MCBA_forest_plot%>%
   group_by(dir)%>%
   summarize(count=n())
-
+#number up and down split by core
 MCBA_forest_plot%>%
   group_by(dir,Core)%>%
   summarize(count=n())%>%
   spread(dir,count)
-
+#number up and down split by amino acid
 MCBA_forest_plot%>%
   group_by(dir,Amino_Acid)%>%
   summarize(count=n())%>%

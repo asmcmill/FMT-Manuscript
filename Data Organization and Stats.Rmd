@@ -54,6 +54,7 @@ MCBA_import<-read.xlsx("Data and Metadata/20231201_FMT_BA_MCBA_Neg_Full.xlsx",sh
   dplyr::slice(22:120)%>%
   dplyr::rename("BA"="Molecule.Name")%>%
   rename_with(~str_remove(.,"\\."))%>%
+  rbind(.,read.csv("Data and Metadata/20240603_BA_with_addedMCBAs_forR.csv")%>%dplyr::rename("BA"="Sample"))%>%
   rename_at(baker_labels$Rank, ~ baker_labels$CLIENT.IDENTIFIER)%>%
   select(BA,samplekey$CLIENT.IDENTIFIER)
 
